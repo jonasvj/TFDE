@@ -98,6 +98,18 @@ class gmm(PyroModule):
         self.loc = torch.from_numpy(loc)
         self.initialized = True
 
+    def get_density(self, data):
+        # Computes the total density of the input data
+        ll = self.get_likelihood_alt(data)
+        density = torch.exp(ll).sum()
+        return density
+
+    def unit_test(self, int_limits):
+        """Integrates probablity density"""
+        return nquad(
+            lambda *args: self.get_density(torch.tensor([args])).item(),
+            int_limits)
+
 
 class CP(PyroModule):
     def __init__(self, K, M=2, N=1000):

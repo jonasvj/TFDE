@@ -16,6 +16,7 @@ np.set_printoptions(precision=4)
 # Run options
 method = 'checkerboard'
 do_unit_test = True # takes some time
+N = 5000
 K = 8
 
 # Generate data
