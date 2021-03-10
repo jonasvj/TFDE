@@ -2,6 +2,7 @@
 import pyro
 import pyro.distributions as dist
 import torch
+from scipy.integrate import nquad
 from pyro.infer import config_enumerate
 from pyro.nn import PyroParam, PyroModule
 from pyro.distributions import constraints
@@ -193,5 +194,9 @@ class CP(PyroModule):
         self.loc = torch.from_numpy(loc)
         self.initialized = True
 
-
+    def unit_test(self, int_limits):
+        """Integrates probablity density"""
+        return nquad(
+            lambda *args: self.get_density(torch.tensor([args])).item(),
+            int_limits)
 
