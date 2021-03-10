@@ -15,7 +15,7 @@ np.set_printoptions(precision=4)
 
 # Run options
 method = 'checkerboard'
-N = 5000
+do_unit_test = True # takes some time
 K = 8
 
 # Generate data
@@ -51,6 +51,7 @@ for step in range(n_steps):
 
 
 #%%
+print(f"Unit test: {model.unit_test([(-5, 5), (-5, 5)])} (should be close to (1, 0))")
 
 loc_est = model.loc.detach().numpy()
 scale_est = model.scale.detach().numpy()
