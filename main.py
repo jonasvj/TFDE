@@ -52,8 +52,6 @@ for step in range(n_steps):
 
 
 #%%
-print(f"Unit test: {model.unit_test([(-5, 5), (-5, 5)])} (should be close to (1, 0))")
-
 loc_est = model.loc.detach().numpy()
 scale_est = model.scale.detach().numpy()
 weight_est = model.weight.detach().numpy()
@@ -118,6 +116,9 @@ plt.show()
 width = height = (lim[1]-lim[0])/bins
 total_density = np.sum(ll)*width*height
 print(f"Total density: {total_density:.3}")
+
+if do_unit_test:
+    print(f"Unit test: {model.unit_test([(-5, 5), (-5, 5)])} (should be close to (1, 0))")
 
 #%%
 
