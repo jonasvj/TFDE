@@ -1,214 +1,508 @@
 # Imports
+import matplotlib.pyplot as plt
+import numpy as np
 import pyro
-import pyro.distributions as dist
 import torch
+import pyro.distributions as dist
+import pyro.distributions.constraints as constraints
+from pyro.infer import SVI, TraceEnum_ELBO, config_enumerate, infer_discrete
+from pyro.nn import PyroModule, PyroParam
+from torch import nn
+from torch.distributions import transform_to, biject_to
 from scipy.integrate import nquad
-from pyro.infer import config_enumerate
-from pyro.nn import PyroParam, PyroModule
-from pyro.distributions import constraints
 from sklearn.cluster import KMeans
-from pyro.infer import TraceEnum_ELBO
-from pyro.ops.indexing import Vindex
 
 
-class gmm(PyroModule):
-    """
-    Gaussian Mixture Model (GMM) for density estimation.
-    """
+class GaussianMixtureModel(PyroModule):
+    """Gaussian Mixture Model following the CP formulation"""
 
-    def __init__(self, K, M=2, N=1000):
-        super(gmm, self).__init__()
+    def __init__(self, K):
+        super().__init__()
         self.K = K
-        self.M = M
-        self.N = N
+        self.M = None
+        self.locs = None
+        self.scales = None
         self.initialized = False
-
-        # Initialise GMM parameters
-        self.loc = torch.normal(torch.zeros((self.K, self.M)), torch.ones((self.K, self.M)))
-        self.scale = torch.ones((self.K, self.M))
-        self.weight = torch.ones(self.K)
-
-        # self.loc = PyroParam(torch.randn(self.K, self.M))
-        # self.scale = PyroParam(torch.ones(self.K, self.M), constraint=constraints.positive)
-        # self.weight = PyroParam(torch.ones(self.K)/self.K, constraint=constraints.simplex)
-
-    @config_enumerate
-    def model(self, data=None):
-
-        if not self.initialized and data is not None:
-            self.initialize_param(data)
-            self.N = len(data)
-
-        # Declare parameters with constraints
-        loc = pyro.param("loc", self.loc)
-        scale = pyro.param("scale", self.scale, constraints.positive)
-        weight = pyro.param("weight", self.weight, constraints.simplex)
-
-        with pyro.plate("data", self.N):
-            # Draw assignment
-
-            assignment = pyro.sample('assignment', dist.Categorical(weight)).long()
-            #Unclear if necessary: fn_dist = dist.Normal(Vindex(loc)[..., assignment, :], Vindex(scale)[..., assignment, :]).to_event(1)
-
-            # Define distribution and sample
-            fn_dist = dist.Normal(loc[assignment, :], scale[assignment, :]).to_event(1)
-            samples = pyro.sample("samples", fn_dist, obs=data)
-
-        # Save parameters to model
-        self.loc = loc
-        self.scale = scale
-        self.weight = weight
-        return samples
-
-    def guide(self, data):
-        """
-        Empty guide for MLE
-        """
-        pass
-
-    def get_likelihood(self, data):
-        """
-        Function to compute likelihood manually.
-        """
-
-        likelihood = torch.zeros(len(data))
-
-        with torch.no_grad():
-            fn_dist = dist.Normal(self.loc, self.scale).to_event(1)
-            for i in range(len(data)):
-                tmp = torch.log((self.weight * torch.exp(fn_dist.log_prob(data[i]))).sum())
-                likelihood[i] = tmp if not torch.isinf(tmp) else -100
-
-            return likelihood.numpy()
-
-    def get_likelihood_alt(self, data, num_particles=1):
-        """
-        Function to compute likelihood manually.
-        """
-        trace_elbo = TraceEnum_ELBO(num_particles=num_particles)
-        for model_trace, _ in trace_elbo._get_traces(self.model, self.guide, [data], {}):
-            grid_log_probs = model_trace.nodes["samples"]["log_prob"]
-        #grid_log_probs = grid_log_probs.reshape(data.shape[0], data.shape[1])
-        return grid_log_probs
-
-
-    def initialize_param(self, data):
-        km = KMeans(n_clusters=self.K, n_init=5)
-        loc = km.fit(data.numpy()).cluster_centers_
-        self.loc = torch.from_numpy(loc)
-        self.initialized = True
-
-    def get_density(self, data):
-        # Computes the total density of the input data
-        ll = self.get_likelihood_alt(data)
-        density = torch.exp(ll).sum()
-        return density
-
-    def unit_test(self, int_limits):
-        """Integrates probablity density"""
-        return nquad(
-            lambda *args: self.get_density(torch.tensor([args])).item(),
-            int_limits)
-
-
-class CP(PyroModule):
-    def __init__(self, K, M=2, N=1000):
-        super(CP, self).__init__()
-        self.K = K
-        self.M = M
-        self.N = N
-        self.initialized = False
-
-        # Initialise parameters
-        self.loc = PyroParam(torch.randn(self.K, self.M))
-        self.scale = PyroParam(torch.ones(self.K, self.M), constraint=constraints.positive)
-        self.weight = PyroParam(torch.ones(self.K)/self.K, constraint=constraints.simplex)
-
+        self.weights = PyroParam(
+            torch.ones(K) / K,
+            constraint=dist.constraints.simplex)
+        self.train_losses = list()
+        self.eval()
 
     @config_enumerate
     def forward(self, data=None):
+        N, M = data.shape if data is not None else (1000, 2)
 
-        if not self.initialized:
-            self.initialize_param(data)
-        if data is not None:
-            self.N = len(data)
+        if self.initialized is False and data is not None:
+            self.init_from_data(data)
+        elif self.initialized is False:
+            self.random_init(M)
 
-        # Allocate samples
-        samples = torch.zeros((self.N, self.M))
+        if M != self.M:
+            raise ValueError('Incorrect number of data columns.')
 
-        with pyro.plate("data", self.N):
-            # Draw assignment
-            assignment = pyro.sample('assignment', dist.Categorical(self.weight)).long()
+        # Empty tensor for data samples
+        x_sample = torch.empty(N, M)
+
+        with pyro.plate('data', N):
+            # Sample cluster/component
+            k = pyro.sample('k', dist.Categorical(self.weights))
+
             for m in range(self.M):
+                # Observations of x_m
                 obs = data[:, m] if data is not None else None
-                samples[:, m] = pyro.sample(f'samples_{m}', dist.Normal(loc=self.loc[assignment, m],
-                                                                        scale=self.scale[assignment, m]),
-                                                                        obs=obs)
 
-        return samples
+                # Sample x_m
+                x_sample[:, m] = pyro.sample(
+                    f'x_{m}',
+                    dist.Normal(loc=self.locs[k, m],
+                                scale=self.scales[k, m]),
+                    obs=obs)
 
-    def model(self, data=None):
-        return self.forward(data)
+            return x_sample
+
+    def init_from_data(self, data, k_means=False):
+        N, M = data.shape
+        self.M = M
+
+        self.locs = PyroParam(
+            data[torch.multinomial(torch.ones(N) / N, self.K),],
+            constraint=constraints.real)
+
+        self.scales = PyroParam(
+            data.std(dim=0).repeat(self.K).reshape(self.K, self.M),
+            constraint=constraints.positive)
+
+        if k_means:
+            k_means_model = KMeans(self.K)
+            k_means_model.fit(data.numpy())
+            locs = k_means_model.cluster_centers_
+
+            self.locs = PyroParam(
+                torch.tensor(locs),
+                constraint=constraints.real)
+
+        self.initialized = True
+
+    def random_init(self, M):
+        self.M = M
+
+        self.locs = PyroParam(
+            torch.rand(self.K, self.M),
+            constraint=constraints.real)
+
+        self.scales = PyroParam(
+            torch.rand(self.K, self.M),
+            constraint=constraints.positive)
+
+        self.initialized = True
 
     def guide(self, data):
-        """
-        Empty guide for MLE
-        """
         pass
 
-    def get_likelihood(self, data):
-        """
-        Function to compute likelihood manually.
-        """
+    def fit_model(self, data, lr=3e-4, n_steps=10000):
+        self.train()
 
-        likelihood = torch.zeros(len(data))
+        N = len(data)
+        adam = pyro.optim.Adam({"lr": lr})
+        svi = SVI(self, self.guide, adam, loss=TraceEnum_ELBO())
 
+        for step in range(n_steps):
+            loss = svi.step(data)
+            self.train_losses.append(loss)
+
+            if step % 1000 == 0:
+                print('[iter {}]  loss: {:.4f}'.format(step, loss))
+
+        self.eval()
+
+    def density(self, data):
         with torch.no_grad():
-            fn_dist = dist.Normal(self.loc, self.scale).to_event(1)
-            for i in range(len(data)):
-                tmp = torch.log((self.weight * torch.exp(fn_dist.log_prob(data[i]))).sum())
-                likelihood[i] = tmp if not torch.isinf(tmp) else -100
+            N, M = data.shape
 
-            return likelihood.numpy()
+            if M != self.M:
+                raise ValueError('Incorrect number of data columns.')
 
-    def get_likelihood_alt(self, data, num_particles=1):
-        """
-        Function to compute log-likelihood via TraceEnum_ELBO
-        Messy.
-        """
+            log_probs = dist.Normal(
+                loc=self.locs,
+                scale=self.scales).log_prob(data.unsqueeze(1))
+
+            density = (
+                    torch.exp(log_probs.sum(dim=2)) * self.weights).sum(dim=1)
+
+            return density
+
+    def log_likelihood(self, data):
         with torch.no_grad():
-            # Extracts logprob for all datapoints in all clusters
-            trace_elbo = TraceEnum_ELBO(num_particles=num_particles)
-            grid_log_probs = torch.zeros((self.K, data.shape[0]))  # Shape [8, 5000] for 5000 datapoints and 8 clusters
-            for model_trace, _ in trace_elbo._get_traces(self.model, self.guide, [data], {}):
-                # Sum log-likelihoods over dimensions
-                for m in range(self.M):
-                    grid_log_probs += model_trace.nodes[f"samples_{m}"]["log_prob"]
+            llh = torch.log(self.density(data)).sum()
+            return llh
 
-            # Scales the log-likelihood values by the weights
-            ll = torch.zeros(data.shape[0])
-            for i in range(data.shape[0]):
-                for j in range(self.K):
-                    ll[i] += grid_log_probs[j, i].exp()*self.weight[j]
-                ll[i] = torch.log(ll[i])
+    def eval_density_grid(self, n_points=100):
+        if self.M != 2:
+            raise ValueError('Can only evaluate density grid for 2-dimensional data.')
+        x_range = np.linspace(-5, 5, n_points)
+        X1, X2 = np.meshgrid(x_range, x_range)
+        XX = np.column_stack((X1.ravel(), X2.ravel()))
+        densities = self.density(torch.tensor(XX)).numpy()
 
-        return ll
+        return x_range, densities.reshape((n_points, n_points))
 
-    def get_density(self, data):
-        # Computes the total density of the input data
-        ll = self.get_likelihood_alt(data)
-        density = torch.exp(ll).sum()
-        return density
 
-    def initialize_param(self, data):
-        km = KMeans(n_clusters=self.K, n_init=5)
-        loc = km.fit(data.numpy()).cluster_centers_
-        self.loc = torch.from_numpy(loc)
-        self.initialized = True
+class CPModel(PyroModule):
+    """CP model where the distribution on each
+       variable can be specified"""
+
+    def __init__(self, K, distributions):
+        super().__init__()
+        self.K = K
+        self.M = len(distributions)
+        self.train_losses = list()
+
+        self.weights = PyroParam(
+            torch.ones(self.K) / self.K,
+            constraint=constraints.simplex)
+
+        self.components = nn.ModuleList()
+
+        for m, d in enumerate(distributions):
+            # Create pyro module for attribute m (i.e. x_m)
+            component = PyroModule(name=str(m))
+
+            # Distribution of x_m
+            component.dist = d
+
+            # List for parameter names of distribution
+            component.params = list()
+
+            # Parameters and constraints of distribution
+            for param, constr in d.arg_constraints.items():
+                # Initialize parameter and set as an attribute of the component
+                # Example:
+                # component.loc = PyroParam(init_tensor, constraint=constraints.real)
+                init_tensor = transform_to(constr)(
+                    torch.empty(self.K).uniform_(-5, 5))
+                setattr(component, param, PyroParam(init_tensor, constraint=constr))
+
+                # Add parameter name to list
+                component.params.append(param)
+
+            # Add component to module list
+            self.components.append(component)
+
+        self.eval()
+
+    @config_enumerate
+    def forward(self, data=None):
+        N, M = data.shape if data is not None else (1000, self.M)
+
+        if M != self.M:
+            raise ValueError('Incorrect number of data columns.')
+
+        # Empty tensor for samples
+        x_sample = torch.empty(N, M)
+
+        with pyro.plate('data', N):
+            # Draw cluster/component
+            k = pyro.sample('k', dist.Categorical(self.weights))
+
+            for m in range(M):
+                # Observations of x_m
+                obs = data[:, m] if data is not None else None
+
+                # Parameters for distribution of x_m
+                params = {param: getattr(self.components[m], param)[k]
+                          for param in self.components[m].params}
+
+                # Draw samples of x_m
+                x_sample[:, m] = pyro.sample(
+                    f'x_{m}',
+                    self.components[m].dist(**params),
+                    obs=obs)
+
+            return x_sample
+
+    def init_from_data(self, data, n_tries=100):
+        inits = list()
+
+        for seed in range(n_tries):
+            pyro.set_rng_seed(seed)
+            pyro.clear_param_store()
+
+            # Set new initial parameters
+            for c in self.components:
+                for param, constr in c.dist.arg_constraints.items():
+                    init_tensor = transform_to(constr)(
+                        torch.empty(self.K).uniform_(-5, 5))
+                    setattr(c, param, PyroParam(init_tensor,
+                                                constraint=constr))
+
+            # Get initial loss
+            svi = SVI(self, self.guide,
+                      pyro.optim.Adam({}),
+                      loss=TraceEnum_ELBO())
+
+            # Save loss and seed
+            inits.append((svi.loss(model, self.guide, data),
+                          seed))
+
+        # Best initialization
+        loss, seed = min(inits)
+
+        # Initialize with best seed
+        pyro.set_rng_seed(seed)
+        pyro.clear_param_store()
+        for c in self.components:
+            for param, constr in c.dist.arg_constraints.items():
+                init_tensor = transform_to(constr)(
+                    torch.empty(self.K).uniform_(-5, 5))
+                setattr(c, param, PyroParam(init_tensor,
+                                            constraint=constr))
+
+    def guide(self, data):
+        pass
+
+    def fit_model(self, data, lr=3e-4, n_steps=10000):
+        self.train()
+
+        adam = pyro.optim.Adam({"lr": lr})
+        svi = SVI(self, self.guide, adam, loss=TraceEnum_ELBO())
+
+        for step in range(n_steps):
+            loss = svi.step(data)
+            self.train_losses.append(loss)
+
+            if step % 1000 == 0:
+                print('[iter {}]  loss: {:.4f}'.format(step, loss))
+
+        self.eval()
+
+    def density(self, data):
+        with torch.no_grad():
+            N, M = data.shape
+
+            if M != self.M:
+                raise ValueError('Incorrect number of data columns.')
+
+            log_probs = torch.empty(N, self.K, M)
+
+            for m in range(M):
+                params = {param: getattr(self.components[m], param)
+                          for param in self.components[m].params}
+
+                log_probs[:, :, m] = self.components[m].dist(
+                    **params).log_prob(data[:, m].unsqueeze(1))
+
+            density = (
+                    torch.exp(log_probs.sum(dim=2)) * self.weights).sum(dim=1)
+
+            return density
+
+    def log_likelihood(self, data):
+        with torch.no_grad():
+            llh = torch.log(self.density(data)).sum()
+            return llh
+
+    def eval_density_grid(self, n_points=100):
+        if self.M != 2:
+            raise ValueError('Can only evaluate density grid for 2-dimensional data.')
+        x_range = np.linspace(-5, 5, n_points)
+        X1, X2 = np.meshgrid(x_range, x_range)
+        XX = np.column_stack((X1.ravel(), X2.ravel()))
+        densities = self.density(torch.tensor(XX)).numpy()
+
+        return x_range, densities.reshape((n_points, n_points))
 
     def unit_test(self, int_limits):
         """Integrates probablity density"""
         return nquad(
-            lambda *args: self.get_density(torch.tensor([args])).item(),
+            lambda *args: self.density(torch.tensor([args])).item(),
             int_limits)
+
+
+class TensorTrain(PyroModule):
+    """Tensor Train model"""
+
+    def __init__(self, Ks):
+        super().__init__()
+        self.Ks = Ks
+        self.M = len(Ks) - 1
+        self.train_losses = list()
+
+        # Weights for latent variable k_0
+        self.k0_weights = PyroParam(
+            torch.ones(self.Ks[0]) / self.Ks[0],
+            constraint=dist.constraints.simplex)
+
+        # Parameters indexed by latent variable number
+        # I.e. by 1, 2,..., M
+        self.params = nn.ModuleDict()
+
+        # Intialize weights, locs and scales
+        self.init_params()
+
+    def init_params(self):
+        for m in range(1, self.M + 1):
+            # PyroModule for storing weights, locs
+            # and scales for x_m
+            module = PyroModule(name=f'x_{m}')
+
+            # Weight matrix W^m ("Transition probabilities")
+            # I.e. probability of k_m = a given k_{m-1} = b
+            module.weights = PyroParam(
+                torch.ones(self.Ks[m - 1], self.Ks[m]) / self.Ks[m],
+                constraint=constraints.simplex)
+
+            # Locs for x_m
+            module.locs = PyroParam(
+                torch.randn(self.Ks[m - 1], self.Ks[m]),
+                constraint=constraints.real)
+
+            # Scales for x_m
+            module.scales = PyroParam(
+                torch.rand(self.Ks[m - 1], self.Ks[m]),
+                constraint=constraints.positive)
+
+            self.params[str(m)] = module
+
+    @config_enumerate
+    def forward(self, data=None):
+        N, M = data.shape if data is not None else (1000, 2)
+
+        if M != self.M:
+            raise ValueError('Incorrect number of data columns.')
+
+        # Empty tensor for data samples
+        x_sample = torch.empty(N, M)
+
+        with pyro.plate('data', N):
+            # Sample k0
+            k_m_prev = pyro.sample(
+                'k_0',
+                dist.Categorical(self.k0_weights))
+
+            for m, params in enumerate(self.params.values()):
+                # Sample k_m
+                k_m = pyro.sample(
+                    f'k_{m + 1}',
+                    dist.Categorical(params.weights[k_m_prev]))
+
+                # Observations of x_m
+                obs = data[:, m] if data is not None else None
+
+                # Sample x_m
+                x_sample[:, m] = pyro.sample(
+                    f'x_{m + 1}',
+                    dist.Normal(loc=params.locs[k_m_prev, k_m],
+                                scale=params.scales[k_m_prev, k_m]),
+                    obs=obs)
+
+                k_m_prev = k_m
+
+            return x_sample
+
+    def guide(self, data):
+        pass
+
+    def fit_model(self, data, lr=3e-4, n_steps=10000):
+        self.train()
+
+        adam = pyro.optim.Adam({"lr": lr})
+        svi = SVI(self, self.guide, adam, loss=TraceEnum_ELBO())
+
+        for step in range(n_steps):
+            loss = svi.step(data)
+            self.train_losses.append(loss)
+
+            if step % 1000 == 1:
+                print('[iter {}]  loss: {:.4f}'.format(step-1, loss))
+
+        self.eval()
+
+    def hot_start(self, data, n_starts=100):
+        seeds = torch.multinomial(
+            torch.ones(10000) / 10000, num_samples=n_starts)
+        inits = list()
+
+        for seed in seeds:
+            pyro.set_rng_seed(seed)
+            pyro.clear_param_store()
+
+            # Set new initial parameters
+            self.init_params()
+
+            # Get initial loss
+            self.fit_model(data, lr=0, n_steps=1)
+            loss = self.train_losses[-1]
+
+            # Save loss and seed
+            inits.append((loss, seed))
+
+            # Reset train losses
+            self.train_losses = list()
+
+        # Best initialization
+        _, best_seed = min(inits)
+
+        # Initialize with best seed
+        pyro.set_rng_seed(best_seed)
+        pyro.clear_param_store()
+        self.init_params()
+
+    def density(self, data):
+        with torch.no_grad():
+            N, M = data.shape
+
+            if M != self.M:
+                raise ValueError('Incorrect number of data columns.')
+
+            # Intialize sum to neutral multiplier
+            sum_ = torch.ones(1, 1)
+
+            # Iterate in reverse order
+            # (to sum last latent variables first)
+            for m, params in reversed(self.params.items()):
+                # Modules are indexed by 1,2,...,M
+                # but data by 0,1,...,M-1
+                m = int(m) - 1
+
+                probs = torch.exp(dist.Normal(
+                    loc=params.locs,
+                    scale=params.scales).log_prob(data[:, m].reshape(-1, 1, 1)))
+
+                sum_ = (params.weights * probs * sum_.unsqueeze(1)).sum(-1)
+
+            density = (self.k0_weights * sum_).sum(-1)
+
+            return density
+
+    def log_likelihood(self, data):
+        with torch.no_grad():
+            llh = torch.log(self.density(data)).sum()
+            return llh
+
+    def eval_density_grid(self, n_points=100, grid=[-5, 5, -5, 5]):
+        if self.M != 2:
+            raise ValueError('Can only evaluate density grid for 2-dimensional data.')
+        x_range = np.linspace(grid[0], grid[1], n_points)
+        y_range = np.linspace(grid[2], grid[3], n_points)
+        X1, X2 = np.meshgrid(x_range, y_range)
+        XX = np.column_stack((X1.ravel(), X2.ravel()))
+        densities = self.density(torch.tensor(XX)).numpy()
+
+        return (x_range, y_range), densities.reshape((n_points, n_points))
+
+    def unit_test(self, int_limits, opts=dict()):
+        """Integrates probablity density"""
+        return nquad(
+            lambda *args: self.density(torch.tensor([args])).item(),
+            int_limits, opts=opts)
+
+    def unit_test_alt(self, n_points=100, grid=[-5, 5, -5, 5]):
+        (x_range, y_range), density = self.eval_density_grid(n_points=n_points, grid=grid)
+        density = density.sum()
+        height = (y_range[-1] - y_range[0])/len(y_range)
+        width  = (x_range[-1] - x_range[0])/len(x_range)
+        scaled_density = density*width*height
+        return scaled_density
+
 
