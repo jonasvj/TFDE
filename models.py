@@ -340,28 +340,37 @@ class TensorTrain(PyroModule):
         # Intialize weights, locs and scales
         self.init_params()
 
-    def init_params(self):
+    def init_params(self, loc_min=None, loc_max=None, scale_max=None):
+
+        if loc_min is None:
+            loc_min = [-1 for m in range(self.M)]
+        if loc_max is None:
+            loc_max = [1 for m in range(self.M)]
+        if scale_max is None:
+            scale_max = [1 for m in range(self.M)]
+
         for m in range(1, self.M + 1):
             # PyroModule for storing weights, locs
             # and scales for x_m
             module = PyroModule(name=f'x_{m}')
-
+            param_shape = (self.Ks[m-1], self.Ks[m])
+            
             # Weight matrix W^m ("Transition probabilities")
             # I.e. probability of k_m = a given k_{m-1} = b
             module.weights = PyroParam(
-                torch.ones(self.Ks[m - 1], self.Ks[m]) / self.Ks[m],
+                torch.ones(param_shape) / self.Ks[m],
                 constraint=constraints.simplex)
-
+            
             # Locs for x_m
             module.locs = PyroParam(
-                torch.randn(self.Ks[m - 1], self.Ks[m]),
+                dist.Uniform(loc_min[m-1], loc_max[m-1]).sample(param_shape),
                 constraint=constraints.real)
-
+            
             # Scales for x_m
             module.scales = PyroParam(
-                torch.rand(self.Ks[m - 1], self.Ks[m]),
+                dist.Uniform(0, scale_max[m-1]).sample(param_shape),
                 constraint=constraints.positive)
-
+            
             self.params[str(m)] = module
 
     @config_enumerate
@@ -375,7 +384,7 @@ class TensorTrain(PyroModule):
         x_sample = torch.empty(N, M)
 
         with pyro.plate('data', N):
-            # Sample k0
+            # Sample k_0
             k_m_prev = pyro.sample(
                 'k_0',
                 dist.Categorical(self.k0_weights))
@@ -403,7 +412,7 @@ class TensorTrain(PyroModule):
     def guide(self, data):
         pass
 
-    def fit_model(self, data, lr=3e-4, n_steps=10000):
+    def fit_model(self, data, lr=3e-4, n_steps=10000, verbose=True):
         self.train()
 
         adam = pyro.optim.Adam({"lr": lr})
@@ -413,8 +422,8 @@ class TensorTrain(PyroModule):
             loss = svi.step(data)
             self.train_losses.append(loss)
 
-            if step % 1000 == 1:
-                print('[iter {}]  loss: {:.4f}'.format(step-1, loss))
+            if step % 1000 == 0 and verbose:
+                print('[iter {}]  loss: {:.4f}'.format(step, loss))
 
         self.eval()
 
@@ -423,15 +432,21 @@ class TensorTrain(PyroModule):
             torch.ones(10000) / 10000, num_samples=n_starts)
         inits = list()
 
+        data_min = data.min(dim=0).values
+        data_max = data.max(dim=0).values
+        data_std = data.std(dim=0)
+
         for seed in seeds:
             pyro.set_rng_seed(seed)
             pyro.clear_param_store()
 
             # Set new initial parameters
-            self.init_params()
+            self.init_params(loc_min=data_min,
+                             loc_max=data_max,
+                             scale_max=data_std)
 
             # Get initial loss
-            self.fit_model(data, lr=0, n_steps=1)
+            self.fit_model(data, lr=0, n_steps=1, verbose=False)
             loss = self.train_losses[-1]
 
             # Save loss and seed
@@ -446,7 +461,9 @@ class TensorTrain(PyroModule):
         # Initialize with best seed
         pyro.set_rng_seed(best_seed)
         pyro.clear_param_store()
-        self.init_params()
+        self.init_params(loc_min=data_min,
+                         loc_max=data_max,
+                         scale_max=data_std)
 
     def density(self, data):
         with torch.no_grad():
@@ -478,6 +495,7 @@ class TensorTrain(PyroModule):
     def log_likelihood(self, data):
         with torch.no_grad():
             llh = torch.log(self.density(data)).sum()
+            
             return llh
 
     def eval_density_grid(self, n_points=100, grid=[-5, 5, -5, 5]):
@@ -498,11 +516,11 @@ class TensorTrain(PyroModule):
             int_limits, opts=opts)
 
     def unit_test_alt(self, n_points=100, grid=[-5, 5, -5, 5]):
-        (x_range, y_range), density = self.eval_density_grid(n_points=n_points, grid=grid)
+        (x_range, y_range), density = self.eval_density_grid(n_points=n_points,
+                                                             grid=grid)
         density = density.sum()
         height = (y_range[-1] - y_range[0])/len(y_range)
         width  = (x_range[-1] - x_range[0])/len(x_range)
         scaled_density = density*width*height
+
         return scaled_density
-
-
