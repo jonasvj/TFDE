@@ -1,31 +1,40 @@
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
-def plot_train_loss(model):
-    fig = plt.figure(figsize=(8, 6))
-    plt.plot(model.train_losses)
-    plt.xlabel('Iteration')
-    plt.ylabel('Loss')
-    plt.title('Training loss')
-    plt.show()
+def plot_train_loss(model, ax=None, figsize=(8,6)):
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+    ax.plot(model.train_losses)
+    ax.set_xlabel('Iteration')
+    ax.set_ylabel('Loss')
+    ax.set_title('Training loss')
 
-def plot_density(model, data):
-    (x_range, y_range), density_eval = model.eval_density_grid(n_points=500)
-    fig, [ax1, ax2] = plt.subplots(nrows=1, ncols=2, figsize=(20, 10))
+
+def plot_density(model, data, density_grid=[-5, 5, -5, 5], axes=None,
+    figsize=(16, 6)):
+
+    if axes is None:
+        fig, axes = plt.subplots(nrows=1, ncols=2, figsize=figsize)
+    
+    # Evaluate density grid
+    (x_range, y_range), density_eval = model.eval_density_grid(n_points=500,
+        grid=density_grid)
+
     # Plot of data and contour lines of density
-    ax1.plot(data[:,0], data[:,1], 'b.', markersize=1)
-    ax1.contour(x_range, y_range, density_eval, colors='red')
-    ax1.set_xlabel('x_1')
-    ax1.set_ylabel('x_2')
-    ax1.set_title('Data and contour lines of density')
+    axes[0].plot(data[:,0], data[:,1], 'b.', markersize=1)
+    axes[0].contour(x_range, y_range, density_eval, colors='red')
+    axes[0].set_xlabel('x_1')
+    axes[0].set_ylabel('x_2')
+    axes[0].set_title('Data and contour lines of density')
 
     # Color map of density
-    cm = ax2.pcolormesh(x_range, y_range, density_eval, cmap=plt.cm.RdBu_r, shading='auto')
-    cbar = fig.colorbar(cm)
-    ax2.set_xlabel('x_1')
-    ax2.set_ylabel('x_2')
-    ax2.set_title('Heat map of density')
-    plt.show()
+    cm = axes[1].pcolormesh(x_range, y_range, density_eval, cmap=plt.cm.RdBu_r,
+        shading='auto')
+    cbar = plt.colorbar(cm, ax=axes[1])
+    axes[1].set_xlabel('x_1')
+    axes[1].set_ylabel('x_2')
+    axes[1].set_title('Heat map of density')
+
 
 def plot_density_alt(model, data):
     (x_range, y_range), density_eval = model.eval_density_grid(n_points=500)
