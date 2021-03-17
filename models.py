@@ -137,15 +137,16 @@ class GaussianMixtureModel(PyroModule):
             llh = torch.log(self.density(data)).sum()
             return llh
 
-    def eval_density_grid(self, n_points=100):
+    def eval_density_grid(self, n_points=100, grid=[-5, 5, -5, 5]):
         if self.M != 2:
             raise ValueError('Can only evaluate density grid for 2-dimensional data.')
-        x_range = np.linspace(-5, 5, n_points)
-        X1, X2 = np.meshgrid(x_range, x_range)
+        x_range = np.linspace(grid[0], grid[1], n_points)
+        y_range = np.linspace(grid[2], grid[3], n_points)
+        X1, X2 = np.meshgrid(x_range, y_range)
         XX = np.column_stack((X1.ravel(), X2.ravel()))
         densities = self.density(torch.tensor(XX)).numpy()
 
-        return x_range, densities.reshape((n_points, n_points))
+        return (x_range, y_range), densities.reshape((n_points, n_points))
 
 
 class CPModel(PyroModule):
