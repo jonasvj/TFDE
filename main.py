@@ -19,15 +19,21 @@ K = [2,2,2]
 
 # Generate data
 data = torch.tensor(toy_data.inf_train_gen(method, batch_size=5000), dtype=torch.float)
+#data = torch.column_stack((data, torch.zeros(5000))) # Test for 3D ---- add 0s as third element
 # Instantiate model
 model = eval(model_type)(K)
+
+#%%
+dens = model.unit_test_multidimensional([-5, 5, -5, 5], n_points=400)
+print(f"Total density: {dens.item()}")
+
 
 #%% Train the model
 if model_type == 'TensorTrain':
     print("[Initialising tensor train parameters]")
     model.hot_start(data, n_starts=250)
     print("[Tensor train initialised]")
-model.fit_model(data, n_steps=10000)
+model.fit_model(data, n_steps=2000)
 
 #%%
 # Log likelihood of data
@@ -47,6 +53,10 @@ plot_density_alt(model, data)
 
 total_density = model.unit_test_alt(3000)
 print(f"Total density: {total_density:.4}")
+
+total_density = model.unit_test_multidimensional([-5, 5, -5, 5], 3000)
+print(f"Total density: {total_density:.4}")
+
 
 #%%
 # Sample data

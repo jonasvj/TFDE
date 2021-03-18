@@ -525,3 +525,36 @@ class TensorTrain(PyroModule):
         scaled_density = density*width*height
 
         return scaled_density
+
+    def eval_density_multi_grid(self, limits, n_points):
+        # Reshape limits
+        limits = torch.Tensor(limits).reshape(self.M, 2)
+        # Allocate interval ranges
+        grid_tensor = torch.zeros(self.M, n_points)
+        # Fill in interval ranges
+        for m, vals in enumerate(limits):
+            grid_tensor[m, :] = torch.linspace(vals[0], vals[1], n_points)
+
+        # Create meshgrid of points
+        mesh = torch.meshgrid([grid for grid in grid_tensor])
+        XX = torch.column_stack([x.ravel() for x in mesh])
+
+        # Evaluate densities
+        densities = self.density(XX)
+
+        # Return ranges for M dimensions and all densities
+
+        if self.M == 2:
+            return (grid_tensor[0].numpy(), grid_tensor[1].numpy()), densities.reshape((n_points, n_points))
+        else:
+            return grid_tensor, densities
+
+    def unit_test_multidimensional(self, limits, n_points=1000):
+        grid_tensor, densities = self.eval_density_multi_grid(limits, n_points)
+        total_density = densities.sum()
+        if self.M == 2:
+            scaling = (grid_tensor[0][-1]-grid_tensor[0][0])*(grid_tensor[1][-1]-grid_tensor[1][0])/(n_points**self.M)
+        else:
+            scaling = np.prod([(vals[-1]-vals[0]).item() for vals in grid_tensor])/(n_points**self.M)
+        scaled_density = total_density * scaling
+        return scaled_density
