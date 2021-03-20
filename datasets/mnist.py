@@ -1,8 +1,26 @@
 import datasets
 import numpy as np
+import random
 
 seed = 42
 rng = np.random.RandomState(seed=seed)
+
+class MNIST_8x8():
+    class Data():
+        def __init__(self, data):
+            self.x = data.astype(np.float32)
+            self.N = self.x.shape[0]
+
+    def __init__(self):
+        file = datasets.root + 'mnist/MNIST_8x8.npy'
+
+        trn, val, tst = load_data_normalised(file)
+
+        self.trn = self.Data(trn)
+        self.val = self.Data(val)
+        self.tst = self.Data(tst)
+
+        self.n_dims = self.trn.x.shape[1]
 
 class MNIST_16x16():
     class Data():
@@ -12,6 +30,23 @@ class MNIST_16x16():
 
     def __init__(self):
         file = datasets.root + 'mnist/MNIST_16x16.npy'
+
+        trn, val, tst = load_data_normalised(file)
+
+        self.trn = self.Data(trn)
+        self.val = self.Data(val)
+        self.tst = self.Data(tst)
+
+        self.n_dims = self.trn.x.shape[1]
+
+class MNIST_28x28():
+    class Data():
+        def __init__(self, data):
+            self.x = data.astype(np.float32)
+            self.N = self.x.shape[0]
+
+    def __init__(self):
+        file = datasets.root + 'mnist/MNIST_28x28.npy'
 
         trn, val, tst = load_data_normalised(file)
 
