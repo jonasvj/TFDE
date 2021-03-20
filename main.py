@@ -49,6 +49,17 @@ print(f'Negative log likelihood of data: {-model.log_likelihood(data_train).item
 plot_train_loss(model)
 
 #%%
+# Generate new images if mnist
+if data_type.split('_')[0] == 'mnist':
+    n_img = 16
+    images = model().detach().numpy().reshape(n_img, int(np.sqrt(n_dim)), int(np.sqrt(n_dim)))
+    fig, ax = plt.subplots(nrows=4, ncols=4)
+    for i in range(n_img):
+        ax[i//4, i%4].imshow(images[i, :, :])
+    plt.show()
+    exit(0)
+
+#%%
 # Plot density
 #plot_density(model, data)
 plot_density_alt(model, data_train)
