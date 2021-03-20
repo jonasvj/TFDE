@@ -9,6 +9,10 @@ from utils import plot_density, plot_density_alt, plot_train_loss
 pyro.enable_validation(True)
 
 if torch.cuda.is_available(): # enabling GPU if available
+    device = 'cuda'
+else:
+    device = 'cpu'
+
 # Plot options
 plt.style.use('seaborn-dark')
 np.set_printoptions(precision=3)
