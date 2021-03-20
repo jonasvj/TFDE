@@ -364,12 +364,12 @@ class TensorTrain(PyroModule):
             
             # Locs for x_m
             module.locs = PyroParam(
-                dist.Uniform(loc_min[m-1], loc_max[m-1]).sample(param_shape),
+                dist.Uniform(min(-0.000001, loc_min[m-1]), max(0.000001, loc_max[m-1])).sample(param_shape),
                 constraint=constraints.real)
             
             # Scales for x_m
             module.scales = PyroParam(
-                dist.Uniform(0, scale_max[m-1]).sample(param_shape),
+                dist.Uniform(0, max(0.000001, scale_max[m-1])).sample(param_shape),
                 constraint=constraints.positive)
             
             self.params[str(m)] = module
