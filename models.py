@@ -18,20 +18,21 @@ class GaussianMixtureModel(PyroModule):
 
     def __init__(self, K, device='cpu'):
         super().__init__()
+        self.device = device
         self.K = K
         self.M = None
         self.locs = None
         self.scales = None
         self.initialized = False
         self.weights = PyroParam(
-            torch.ones(K) / K,
+            (torch.ones(K) / K).to(device),
             constraint=dist.constraints.simplex)
         self.train_losses = list()
         self.eval()
 
     @config_enumerate
-    def forward(self, data=None):
-        N, M = data.shape if data is not None else (1000, 2)
+    def forward(self, data=None, n_samples=1000, n_dim=2):
+        N, M = data.shape if data is not None else (n_samples, n_dim)
 
         if self.initialized is False and data is not None:
             self.init_from_data(data)
@@ -66,11 +67,11 @@ class GaussianMixtureModel(PyroModule):
         self.M = M
 
         self.locs = PyroParam(
-            data[torch.multinomial(torch.ones(N) / N, self.K),],
+            data[torch.multinomial(torch.ones(N) / N, self.K).to(self.device),],
             constraint=constraints.real)
 
         self.scales = PyroParam(
-            data.std(dim=0).repeat(self.K).reshape(self.K, self.M),
+            data.std(dim=0).repeat(self.K).reshape(self.K, self.M).to(self.device),
             constraint=constraints.positive)
 
         if k_means:
@@ -80,7 +81,7 @@ class GaussianMixtureModel(PyroModule):
 
             self.locs = PyroParam(
                 torch.tensor(locs),
-                constraint=constraints.real)
+                constraint=constraints.real).to(self.device)
 
         self.initialized = True
 
@@ -155,19 +156,20 @@ class CPModel(PyroModule):
 
     def __init__(self, K, distributions, device='cpu'):
         super().__init__()
+        self.device = device
         self.K = K
         self.M = len(distributions)
         self.train_losses = list()
 
         self.weights = PyroParam(
-            torch.ones(self.K) / self.K,
+            (torch.ones(self.K) / self.K).to(device),
             constraint=constraints.simplex)
 
         self.components = nn.ModuleList()
 
         for m, d in enumerate(distributions):
             # Create pyro module for attribute m (i.e. x_m)
-            component = PyroModule(name=str(m))
+            component = PyroModule(name=str(m)).to(self.device)
 
             # Distribution of x_m
             component.dist = d
@@ -181,7 +183,7 @@ class CPModel(PyroModule):
                 # Example:
                 # component.loc = PyroParam(init_tensor, constraint=constraints.real)
                 init_tensor = transform_to(constr)(
-                    torch.empty(self.K).uniform_(-5, 5))
+                    torch.empty(self.K).uniform_(-5, 5).to(self.device))
                 setattr(component, param, PyroParam(init_tensor, constraint=constr))
 
                 # Add parameter name to list
@@ -193,8 +195,8 @@ class CPModel(PyroModule):
         self.eval()
 
     @config_enumerate
-    def forward(self, data=None):
-        N, M = data.shape if data is not None else (1000, self.M)
+    def forward(self, data=None, n_samples=1000, n_dim=2):
+        N, M = data.shape if data is not None else (n_samples, self.M)
 
         if M != self.M:
             raise ValueError('Incorrect number of data columns.')
