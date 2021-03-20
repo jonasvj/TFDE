@@ -5,6 +5,23 @@ import random
 seed = 42
 rng = np.random.RandomState(seed=seed)
 
+class MNIST_7x7():
+    class Data():
+        def __init__(self, data):
+            self.x = data.astype(np.float32)
+            self.N = self.x.shape[0]
+
+    def __init__(self):
+        file = datasets.root + 'mnist/MNIST_7x7.npy'
+
+        trn, val, tst = load_data_normalised(file)
+
+        self.trn = self.Data(trn)
+        self.val = self.Data(val)
+        self.tst = self.Data(tst)
+
+        self.n_dims = self.trn.x.shape[1]
+
 class MNIST_8x8():
     class Data():
         def __init__(self, data):
