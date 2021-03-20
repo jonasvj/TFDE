@@ -15,7 +15,8 @@ np.set_printoptions(precision=3)
 # Select dataset and model
 data_type = 'checkerboard'
 model_type = 'TensorTrain'
-K = [2,2,2]
+n_dim = 2 # dimensions of data
+K = [2]*(n_dim + 1)
 
 # Load data
 data = load_data(data_type)
@@ -28,7 +29,7 @@ data_test = torch.tensor(data.tst.x)
 model = eval(model_type)(K)
 
 #%%
-dens = model.unit_test_multidimensional([-5, 5, -5, 5], n_points=400)
+dens = model.unit_test_multidimensional(np.array([-5, 5]*n_dim).reshape(-1), n_points=400)
 print(f"Total density: {dens.item()}")
 
 
