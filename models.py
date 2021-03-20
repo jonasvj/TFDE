@@ -16,7 +16,7 @@ from sklearn.cluster import KMeans
 class GaussianMixtureModel(PyroModule):
     """Gaussian Mixture Model following the CP formulation"""
 
-    def __init__(self, K):
+    def __init__(self, K, device='cpu'):
         super().__init__()
         self.K = K
         self.M = None
@@ -153,7 +153,7 @@ class CPModel(PyroModule):
     """CP model where the distribution on each
        variable can be specified"""
 
-    def __init__(self, K, distributions):
+    def __init__(self, K, distributions, device='cpu'):
         super().__init__()
         self.K = K
         self.M = len(distributions)
@@ -323,23 +323,27 @@ class CPModel(PyroModule):
 class TensorTrain(PyroModule):
     """Tensor Train model"""
 
-    def __init__(self, Ks):
+    def __init__(self, Ks, device='cpu'):
         super().__init__()
+        self.device = device
         self.Ks = Ks
         self.M = len(Ks) - 1
         self.train_losses = list()
 
         # Weights for latent variable k_0
         self.k0_weights = PyroParam(
-            torch.ones(self.Ks[0]) / self.Ks[0],
+            (torch.ones(self.Ks[0]) / self.Ks[0]).to(device),
             constraint=dist.constraints.simplex)
 
         # Parameters indexed by latent variable number
         # I.e. by 1, 2,..., M
-        self.params = nn.ModuleDict()
+        self.params = nn.ModuleDict().to(device)
 
         # Intialize weights, locs and scales
         self.init_params()
+
+        if self.device == 'cuda':
+            self.cuda()
 
     def init_params(self, loc_min=None, loc_max=None, scale_max=None):
 
@@ -353,48 +357,48 @@ class TensorTrain(PyroModule):
         for m in range(1, self.M + 1):
             # PyroModule for storing weights, locs
             # and scales for x_m
-            module = PyroModule(name=f'x_{m}')
+            module = PyroModule(name=f'x_{m}').to(self.device)
             param_shape = (self.Ks[m-1], self.Ks[m])
             
             # Weight matrix W^m ("Transition probabilities")
             # I.e. probability of k_m = a given k_{m-1} = b
             module.weights = PyroParam(
-                torch.ones(param_shape) / self.Ks[m],
+                (torch.ones(param_shape) / self.Ks[m]).to(self.device),
                 constraint=constraints.simplex)
             
             # Locs for x_m
             module.locs = PyroParam(
-                dist.Uniform(min(-0.000001, loc_min[m-1]), max(0.000001, loc_max[m-1])).sample(param_shape),
+                dist.Uniform(min(-0.000001, loc_min[m-1]), max(0.000001, loc_max[m-1])).sample(param_shape).to(self.device),
                 constraint=constraints.real)
             
             # Scales for x_m
             module.scales = PyroParam(
-                dist.Uniform(0, max(0.000001, scale_max[m-1])).sample(param_shape),
+                dist.Uniform(0, max(0.000001, scale_max[m-1])).sample(param_shape).to(self.device),
                 constraint=constraints.positive)
             
             self.params[str(m)] = module
 
     @config_enumerate
-    def forward(self, data=None):
-        N, M = data.shape if data is not None else (1000, 2)
+    def forward(self, data=None, n_samples=1000, n_dim=2):
+        N, M = data.shape if data is not None else (n_samples, n_dim)
 
         if M != self.M:
             raise ValueError('Incorrect number of data columns.')
 
         # Empty tensor for data samples
-        x_sample = torch.empty(N, M)
+        x_sample = torch.empty(N, M).to(self.device)
 
         with pyro.plate('data', N):
             # Sample k_0
             k_m_prev = pyro.sample(
                 'k_0',
-                dist.Categorical(self.k0_weights))
+                dist.Categorical(self.k0_weights)).to(self.device)
 
             for m, params in enumerate(self.params.values()):
                 # Sample k_m
                 k_m = pyro.sample(
                     f'k_{m + 1}',
-                    dist.Categorical(params.weights[k_m_prev]))
+                    dist.Categorical(params.weights[k_m_prev])).to(self.device)
 
                 # Observations of x_m
                 obs = data[:, m] if data is not None else None
@@ -404,7 +408,7 @@ class TensorTrain(PyroModule):
                     f'x_{m + 1}',
                     dist.Normal(loc=params.locs[k_m_prev, k_m],
                                 scale=params.scales[k_m_prev, k_m]),
-                    obs=obs)
+                    obs=obs).to(self.device)
 
                 k_m_prev = k_m
 
@@ -474,7 +478,7 @@ class TensorTrain(PyroModule):
                 raise ValueError('Incorrect number of data columns.')
 
             # Intialize sum to neutral multiplier
-            sum_ = torch.ones(1, 1)
+            sum_ = torch.ones(1, 1).to(self.device)
 
             # Iterate in reverse order
             # (to sum last latent variables first)
@@ -485,7 +489,7 @@ class TensorTrain(PyroModule):
 
                 probs = torch.exp(dist.Normal(
                     loc=params.locs,
-                    scale=params.scales).log_prob(data[:, m].reshape(-1, 1, 1)))
+                    scale=params.scales).log_prob(data[:, m].reshape(-1, 1, 1))).to(self.device)
 
                 sum_ = (params.weights * probs * sum_.unsqueeze(1)).sum(-1)
 
