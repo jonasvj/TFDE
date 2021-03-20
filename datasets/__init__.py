@@ -36,4 +36,7 @@ def load_data(name):
     elif name == '2spirals':
         return TwoSpirals()
 
+    elif name == 'mnist_16x16':
+        return MNIST_16x16()
+
     
