@@ -8,7 +8,7 @@ from ffjord.datasets.bsds300 import BSDS300
 from .synthetic import EightGaussians
 from .synthetic import Checkerboard
 from .synthetic import TwoSpirals
-
+from .mnist import MNIST_8x8, MNIST_16x16, MNIST_28x28
 
 def load_data(name):
     
@@ -36,7 +36,14 @@ def load_data(name):
     elif name == '2spirals':
         return TwoSpirals()
 
+    elif name == 'mnist_8x8':
+        return MNIST_8x8()
+
     elif name == 'mnist_16x16':
         return MNIST_16x16()
+
+    elif name == 'mnist_28x28':
+        return MNIST_28x28()
+
 
     
