@@ -16,33 +16,43 @@ from sklearn.cluster import KMeans
 class GaussianMixtureModel(PyroModule):
     """Gaussian Mixture Model following the CP formulation"""
 
-    def __init__(self, K):
+    def __init__(self, K, M, device='cpu'):
         super().__init__()
         self.K = K
-        self.M = None
-        self.locs = None
-        self.scales = None
-        self.initialized = False
-        self.weights = PyroParam(
-            torch.ones(K) / K,
-            constraint=dist.constraints.simplex)
+        self.M = M
+        self.device = device
+        self.kwargs = {'K': K, 'M': M, 'device': device}
         self.train_losses = list()
+        
+        self.weights = PyroParam(
+            (torch.ones(K, device=self.device) / K),
+            constraint=constraints.simplex)
+        
+        self.random_init()
+
+        if 'cuda' in self.device:
+            self.cuda()
+        
         self.eval()
+    
+    def random_init(self):
+        self.locs = PyroParam(
+            torch.randn(self.K, self.M, device=self.device),
+            constraint=constraints.real)
+
+        self.scales = PyroParam(
+            torch.rand(self.K, self.M, device=self.device),
+            constraint=constraints.positive)
 
     @config_enumerate
-    def forward(self, data=None):
-        N, M = data.shape if data is not None else (1000, 2)
-
-        if self.initialized is False and data is not None:
-            self.init_from_data(data)
-        elif self.initialized is False:
-            self.random_init(M)
+    def forward(self, data=None, n_samples=1000):
+        N, M = data.shape if data is not None else (n_samples, self.M)
 
         if M != self.M:
             raise ValueError('Incorrect number of data columns.')
 
         # Empty tensor for data samples
-        x_sample = torch.empty(N, M)
+        x_sample = torch.empty(N, M, device=self.device)
 
         with pyro.plate('data', N):
             # Sample cluster/component
@@ -60,47 +70,11 @@ class GaussianMixtureModel(PyroModule):
                     obs=obs)
 
             return x_sample
-
-    def init_from_data(self, data, k_means=False):
-        N, M = data.shape
-        self.M = M
-
-        self.locs = PyroParam(
-            data[torch.multinomial(torch.ones(N) / N, self.K),],
-            constraint=constraints.real)
-
-        self.scales = PyroParam(
-            data.std(dim=0).repeat(self.K).reshape(self.K, self.M),
-            constraint=constraints.positive)
-
-        if k_means:
-            k_means_model = KMeans(self.K)
-            k_means_model.fit(data.numpy())
-            locs = k_means_model.cluster_centers_
-
-            self.locs = PyroParam(
-                torch.tensor(locs),
-                constraint=constraints.real)
-
-        self.initialized = True
-
-    def random_init(self, M):
-        self.M = M
-
-        self.locs = PyroParam(
-            torch.rand(self.K, self.M),
-            constraint=constraints.real)
-
-        self.scales = PyroParam(
-            torch.rand(self.K, self.M),
-            constraint=constraints.positive)
-
-        self.initialized = True
-
+    
     def guide(self, data):
         pass
 
-    def fit_model(self, data, lr=3e-4, n_steps=10000):
+    def fit_model(self, data, lr=3e-4, n_steps=10000, verbose=True):
         self.train()
 
         N = len(data)
@@ -111,10 +85,33 @@ class GaussianMixtureModel(PyroModule):
             loss = svi.step(data)
             self.train_losses.append(loss)
 
-            if step % 1000 == 0:
+            if step % 1000 == 0 and verbose:
                 print('[iter {}]  loss: {:.4f}'.format(step, loss))
 
         self.eval()
+
+    def init_from_data(self, data, k_means=True):
+        N, M = data.shape
+
+        if M != self.M:
+            raise ValueError('Incorrect number of data columns.')
+
+        self.locs = PyroParam(
+            data[torch.multinomial(torch.ones(N) / N, self.K),],
+            constraint=constraints.real)
+        
+        self.scales = PyroParam(
+            data.std(dim=0).repeat(self.K).reshape(self.K, self.M),
+            constraint=constraints.positive)
+        
+        if k_means:
+            k_means_model = KMeans(self.K)
+            k_means_model.fit(data.cpu().numpy())
+            locs = k_means_model.cluster_centers_
+
+            self.locs = PyroParam(
+                torch.tensor(locs, device=self.device),
+                constraint=constraints.real)
 
     def density(self, data):
         with torch.no_grad():
@@ -128,7 +125,7 @@ class GaussianMixtureModel(PyroModule):
                 scale=self.scales).log_prob(data.unsqueeze(1))
 
             density = (
-                    torch.exp(log_probs.sum(dim=2)) * self.weights).sum(dim=1)
+                torch.exp(log_probs.sum(dim=2)) * self.weights).sum(dim=1)
 
             return density
 
@@ -144,7 +141,8 @@ class GaussianMixtureModel(PyroModule):
         y_range = np.linspace(grid[2], grid[3], n_points)
         X1, X2 = np.meshgrid(x_range, y_range)
         XX = np.column_stack((X1.ravel(), X2.ravel()))
-        densities = self.density(torch.tensor(XX)).numpy()
+        densities = self.density(
+            torch.tensor(XX, device=self.device)).cpu().numpy()
 
         return (x_range, y_range), densities.reshape((n_points, n_points))
 
@@ -153,19 +151,31 @@ class CPModel(PyroModule):
     """CP model where the distribution on each
        variable can be specified"""
 
-    def __init__(self, K, distributions):
+    def __init__(self, K, distributions, device='cpu'):
         super().__init__()
         self.K = K
+        self.distributions = distributions
+        self.device = device
+        self.kwargs = {'K': K, 'distributions': distributions, 'device': device}
         self.M = len(distributions)
         self.train_losses = list()
 
         self.weights = PyroParam(
-            torch.ones(self.K) / self.K,
+            torch.ones(self.K, device=self.device) / self.K,
             constraint=constraints.simplex)
+
+        self.init_params()
+
+        if 'cuda' in self.device:
+            self.cuda()
+
+        self.eval()
+
+    def init_params(self):
 
         self.components = nn.ModuleList()
 
-        for m, d in enumerate(distributions):
+        for m, d in enumerate(self.distributions):
             # Create pyro module for attribute m (i.e. x_m)
             component = PyroModule(name=str(m))
 
@@ -181,7 +191,7 @@ class CPModel(PyroModule):
                 # Example:
                 # component.loc = PyroParam(init_tensor, constraint=constraints.real)
                 init_tensor = transform_to(constr)(
-                    torch.empty(self.K).uniform_(-5, 5))
+                    torch.empty(self.K, device=self.device).uniform_(-1, 1))
                 setattr(component, param, PyroParam(init_tensor, constraint=constr))
 
                 # Add parameter name to list
@@ -190,17 +200,15 @@ class CPModel(PyroModule):
             # Add component to module list
             self.components.append(component)
 
-        self.eval()
-
     @config_enumerate
-    def forward(self, data=None):
-        N, M = data.shape if data is not None else (1000, self.M)
+    def forward(self, data=None, n_samples=1000):
+        N, M = data.shape if data is not None else (n_samples, self.M)
 
         if M != self.M:
             raise ValueError('Incorrect number of data columns.')
 
         # Empty tensor for samples
-        x_sample = torch.empty(N, M)
+        x_sample = torch.empty(N, M, device=self.device)
 
         with pyro.plate('data', N):
             # Draw cluster/component
@@ -221,48 +229,11 @@ class CPModel(PyroModule):
                     obs=obs)
 
             return x_sample
-
-    def init_from_data(self, data, n_tries=100):
-        inits = list()
-
-        for seed in range(n_tries):
-            pyro.set_rng_seed(seed)
-            pyro.clear_param_store()
-
-            # Set new initial parameters
-            for c in self.components:
-                for param, constr in c.dist.arg_constraints.items():
-                    init_tensor = transform_to(constr)(
-                        torch.empty(self.K).uniform_(-5, 5))
-                    setattr(c, param, PyroParam(init_tensor,
-                                                constraint=constr))
-
-            # Get initial loss
-            svi = SVI(self, self.guide,
-                      pyro.optim.Adam({}),
-                      loss=TraceEnum_ELBO())
-
-            # Save loss and seed
-            inits.append((svi.loss(model, self.guide, data),
-                          seed))
-
-        # Best initialization
-        loss, seed = min(inits)
-
-        # Initialize with best seed
-        pyro.set_rng_seed(seed)
-        pyro.clear_param_store()
-        for c in self.components:
-            for param, constr in c.dist.arg_constraints.items():
-                init_tensor = transform_to(constr)(
-                    torch.empty(self.K).uniform_(-5, 5))
-                setattr(c, param, PyroParam(init_tensor,
-                                            constraint=constr))
-
+    
     def guide(self, data):
         pass
 
-    def fit_model(self, data, lr=3e-4, n_steps=10000):
+    def fit_model(self, data, lr=3e-4, n_steps=10000, verbose=True):
         self.train()
 
         adam = pyro.optim.Adam({"lr": lr})
@@ -272,10 +243,40 @@ class CPModel(PyroModule):
             loss = svi.step(data)
             self.train_losses.append(loss)
 
-            if step % 1000 == 0:
+            if step % 1000 == 0 and verbose:
                 print('[iter {}]  loss: {:.4f}'.format(step, loss))
 
         self.eval()
+
+    def hot_start(self, data, n_starts=100):
+        seeds = torch.multinomial(
+            torch.ones(10000) / 10000, num_samples=n_starts)
+        inits = list()
+
+        for seed in seeds:
+            pyro.set_rng_seed(seed)
+            pyro.clear_param_store()
+
+            # Set new initial parameters
+            self.init_params()
+
+            # Get initial loss
+            self.fit_model(data, lr=0, n_steps=1, verbose=False)
+            loss = self.train_losses[-1]
+
+            # Save loss and seed
+            inits.append((loss, seed))
+
+            # Reset train losses
+            self.train_losses = list()
+
+        # Best initialization
+        _, best_seed = min(inits)
+
+        # Initialize with best seed
+        pyro.set_rng_seed(best_seed)
+        pyro.clear_param_store()
+        self.init_params()
 
     def density(self, data):
         with torch.no_grad():
@@ -284,7 +285,7 @@ class CPModel(PyroModule):
             if M != self.M:
                 raise ValueError('Incorrect number of data columns.')
 
-            log_probs = torch.empty(N, self.K, M)
+            log_probs = torch.empty(N, self.K, M, device=self.device)
 
             for m in range(M):
                 params = {param: getattr(self.components[m], param)
@@ -309,29 +310,33 @@ class CPModel(PyroModule):
         x_range = np.linspace(-5, 5, n_points)
         X1, X2 = np.meshgrid(x_range, x_range)
         XX = np.column_stack((X1.ravel(), X2.ravel()))
-        densities = self.density(torch.tensor(XX)).numpy()
+        densities = self.density(
+            torch.tensor(XX, device=self.device)).cpu().numpy()
 
         return x_range, densities.reshape((n_points, n_points))
 
-    def unit_test(self, int_limits):
+    def unit_test(self, int_limits, opts=dict()):
         """Integrates probablity density"""
         return nquad(
-            lambda *args: self.density(torch.tensor([args])).item(),
-            int_limits)
+            lambda *args: self.density(
+                torch.tensor([args], device=self.device)).item(),
+            int_limits, opts=opts)
 
 
 class TensorTrain(PyroModule):
     """Tensor Train model"""
 
-    def __init__(self, Ks):
+    def __init__(self, Ks, device='cpu'):
         super().__init__()
         self.Ks = Ks
-        self.M = len(Ks) - 1
+        self.device = device
+        self.kwargs = {'Ks': Ks, 'device': device}
+        self.M = len(self.Ks) - 1
         self.train_losses = list()
 
         # Weights for latent variable k_0
         self.k0_weights = PyroParam(
-            torch.ones(self.Ks[0]) / self.Ks[0],
+            torch.ones(self.Ks[0], device=self.device) / self.Ks[0],
             constraint=dist.constraints.simplex)
 
         # Parameters indexed by latent variable number
@@ -340,6 +345,11 @@ class TensorTrain(PyroModule):
 
         # Intialize weights, locs and scales
         self.init_params()
+
+        if 'cuda' in self.device:
+            self.cuda()
+        
+        self.eval()
 
     def init_params(self, loc_min=None, loc_max=None, scale_max=None):
 
@@ -359,30 +369,31 @@ class TensorTrain(PyroModule):
             # Weight matrix W^m ("Transition probabilities")
             # I.e. probability of k_m = a given k_{m-1} = b
             module.weights = PyroParam(
-                torch.ones(param_shape) / self.Ks[m],
+                torch.ones(param_shape, device=self.device) / self.Ks[m],
                 constraint=constraints.simplex)
             
             # Locs for x_m
             module.locs = PyroParam(
-                dist.Uniform(loc_min[m-1], loc_max[m-1]).sample(param_shape),
+                dist.Uniform(min(-1e-6, loc_min[m-1]),
+                             max(1e-6, loc_max[m-1])).sample(param_shape).to(self.device),
                 constraint=constraints.real)
             
             # Scales for x_m
             module.scales = PyroParam(
-                dist.Uniform(0, scale_max[m-1]).sample(param_shape),
+                dist.Uniform(0, max(1e-6, scale_max[m-1])).sample(param_shape).to(self.device),
                 constraint=constraints.positive)
             
             self.params[str(m)] = module
 
     @config_enumerate
-    def forward(self, data=None):
-        N, M = data.shape if data is not None else (1000, 2)
+    def forward(self, data=None, n_samples=1000, n_dim=2):
+        N, M = data.shape if data is not None else (n_samples, n_dim)
 
         if M != self.M:
             raise ValueError('Incorrect number of data columns.')
 
         # Empty tensor for data samples
-        x_sample = torch.empty(N, M)
+        x_sample = torch.empty(N, M, device=self.device)
 
         with pyro.plate('data', N):
             # Sample k_0
@@ -474,7 +485,7 @@ class TensorTrain(PyroModule):
                 raise ValueError('Incorrect number of data columns.')
 
             # Intialize sum to neutral multiplier
-            sum_ = torch.ones(1, 1)
+            sum_ = torch.ones(1, 1, device=self.device)
 
             # Iterate in reverse order
             # (to sum last latent variables first)
@@ -506,14 +517,16 @@ class TensorTrain(PyroModule):
         y_range = np.linspace(grid[2], grid[3], n_points)
         X1, X2 = np.meshgrid(x_range, y_range)
         XX = np.column_stack((X1.ravel(), X2.ravel()))
-        densities = self.density(torch.tensor(XX)).numpy()
+        densities = self.density(
+            torch.tensor(XX, device=self.device)).cpu().numpy()
 
         return (x_range, y_range), densities.reshape((n_points, n_points))
 
     def unit_test(self, int_limits, opts=dict()):
         """Integrates probablity density"""
         return nquad(
-            lambda *args: self.density(torch.tensor([args])).item(),
+            lambda *args: self.density(
+                torch.tensor([args], device=self.device)).item(),
             int_limits, opts=opts)
 
     def unit_test_alt(self, n_points=100, grid=[-5, 5, -5, 5]):
