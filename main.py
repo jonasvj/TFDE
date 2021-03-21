@@ -4,18 +4,21 @@ import numpy as np
 import pyro
 import torch
 import toy_data as toy_data
-from models import GaussianMixtureModel, CPModel, TensorTrain
+from models import GaussianMixtureModel, CPModel, TensorTrain, GaussianMixtureModelFull
 from utils import plot_density, plot_density_alt, plot_train_loss
 pyro.enable_validation(True)
+
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 # Plot options
 plt.style.use('seaborn-dark')
 np.set_printoptions(precision=3)
 
 # Select dataset and model
-method = 'checkerboard'
-model_type = 'TensorTrain'
-K = [2,2,2]
+method = '2spirals'
+model_type = 'GaussianMixtureModelFull'
+K = 8
+#K = [2,2,2]
 
 # Generate data
 data = torch.tensor(toy_data.inf_train_gen(method, batch_size=5000), dtype=torch.float)
@@ -24,8 +27,8 @@ data = torch.tensor(toy_data.inf_train_gen(method, batch_size=5000), dtype=torch
 model = eval(model_type)(K)
 
 #%%
-dens = model.unit_test_multidimensional([-5, 5, -5, 5], n_points=400)
-print(f"Total density: {dens.item()}")
+#dens = model.unit_test_multidimensional([-5, 5, -5, 5], n_points=400)
+#print(f"Total density: {dens.item()}")
 
 
 #%% Train the model
@@ -33,7 +36,10 @@ if model_type == 'TensorTrain':
     print("[Initialising tensor train parameters]")
     model.hot_start(data, n_starts=250)
     print("[Tensor train initialised]")
-model.fit_model(data, n_steps=2000)
+else:
+    model.init_from_data(data, k_means=True)
+#%%
+model.fit_model(data, n_steps=1000)
 
 #%%
 # Log likelihood of data

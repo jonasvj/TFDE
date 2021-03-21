@@ -558,3 +558,221 @@ class TensorTrain(PyroModule):
             scaling = np.prod([(vals[-1]-vals[0]).item() for vals in grid_tensor])/(n_points**self.M)
         scaled_density = total_density * scaling
         return scaled_density
+
+
+class GaussianMixtureModelFull(PyroModule):
+    """Gaussian Mixture Model with full covariance matrix"""
+
+    def __init__(self, K, device='cpu'):
+        super().__init__()
+        self.K = K
+        self.M = None
+        self.locs = None
+        self.scales = None      # Variances
+        self.cov    = None      # Covariances
+        self.scale_tril = None  # Covariance matrix
+        self.initialized = False
+        self.weights = PyroParam(
+            torch.ones(K, device=self.device) / K,
+            constraint=dist.constraints.simplex)
+        self.kwargs = {'K': K, 'M': M, 'device': device}
+        self.train_losses = list()
+
+        if 'cuda' in self.device:
+            self.cuda()
+
+        self.eval()
+
+    @config_enumerate
+    def forward(self, data=None):
+        N, M = data.shape if data is not None else (1000, 2)
+
+        if self.initialized is False and data is not None:
+            self.init_from_data(data)
+        elif self.initialized is False:
+            self.random_init(M)
+
+        if M != self.M:
+            raise ValueError('Incorrect number of data columns.')
+
+        # Combine covariances and variances
+        for k in range(self.K):
+            self.scale_tril[k, :, :] = torch.mm(self.scales[k,:].diag_embed(), self.cov[k, :, :])
+
+
+        # Empty tensor for data samples
+        x_sample = torch.empty(N, M)
+
+        with pyro.plate('data', N):
+            # Sample cluster/component
+            k = pyro.sample('k', dist.Categorical(self.weights))
+
+            x_sample = pyro.sample('x_sample', dist.MultivariateNormal(loc=self.locs[k], scale_tril=self.scale_tril[k]),
+                                   obs=data)
+
+
+
+            return x_sample
+
+    def init_from_data(self, data, k_means=False):
+        N, M = data.shape
+        self.M = M
+
+        self.locs = PyroParam(
+            data[torch.multinomial(torch.ones(N, device=self.device) / N, self.K),],
+            constraint=constraints.real, )
+
+        self.scales = PyroParam(
+            data.std(dim=0).repeat(self.K).reshape(self.K, self.M).to(self.device),
+            constraint=constraints.positive)
+
+        if k_means:
+            k_means_model = KMeans(self.K)
+            k_means_model.fit(data.numpy())
+            locs = k_means_model.cluster_centers_
+
+            self.locs = PyroParam(
+                torch.tensor(locs, device=self.device),
+                constraint=constraints.real)
+
+        # Initialisation of lower cholesky factor of covariance matrix
+        cov = torch.zeros(self.K, self.M, self.M)
+        for k in range(self.K):
+            cov[k, :, :] =dist.LKJCholesky(self.M).sample()
+        self.cov = PyroParam(cov.to(device=self.device), constraint=constraints.lower_cholesky, event_dim=2)
+
+        # Covariance matrix placeholder
+        self.scale_tril = torch.zeros(self.K, self.M, self.M, device=self.device)
+
+        # Combination of to lower lower triangular covariance matrix (scale_tril)
+        for k in range(self.K):
+            self.scale_tril[k, :, :] = torch.mm(self.scales[k,:].diag_embed(), self.cov[k, :, :])
+
+        self.initialized = True
+
+    def random_init(self, M):
+        self.M = M
+
+        self.locs = PyroParam(
+            torch.rand(self.K, self.M, device=self.device),
+            constraint=constraints.real)
+
+        self.scales = PyroParam(
+            torch.rand(self.K, self.M, device=self.device),
+            constraint=constraints.positive)
+
+        # Initialisation of lower cholesky factor of covariance matrix
+        cov = torch.zeros(self.K, self.M, self.M)
+        for k in range(self.K):
+            cov[k, :, :] =dist.LKJCholesky(self.M).sample()
+        self.cov = PyroParam(cov.to(device=self.device), constraint=constraints.lower_cholesky, event_dim=2)
+
+        # Covariance matrix placeholder
+        self.scale_tril = torch.zeros(self.K, self.M, self.M, device=self.device)
+
+        # Combination of to lower lower triangular covariance matrix (scale_tril)
+        for k in range(self.K):
+            self.scale_tril[k, :, :] = torch.mm(self.scales[k,:].diag_embed(), self.cov[k, :, :])
+
+        self.initialized = True
+
+    def guide(self, data):
+        pass
+
+    def fit_model(self, data, lr=3e-4, n_steps=10000):
+        self.train()
+
+        N = len(data)
+        adam = pyro.optim.Adam({"lr": lr})
+        svi = SVI(self, self.guide, adam, loss=TraceEnum_ELBO())
+
+        for step in range(n_steps):
+            loss = svi.step(data)
+            self.train_losses.append(loss)
+
+            if step % 1000 == 0:
+                print('[iter {}]  loss: {:.4f}'.format(step, loss))
+
+        self.eval()
+
+    def density(self, data):
+        with torch.no_grad():
+            N, M = data.shape
+
+            if M != self.M:
+                raise ValueError('Incorrect number of data columns.')
+
+            density = torch.zeros(data.shape[0], device=self.device)
+            for k in range(self.K):
+                density += self.weights[k]* torch.exp(dist.MultivariateNormal(loc=self.locs[k].double(),
+                                                       scale_tril=self.scale_tril[k].double()).log_prob(data))
+
+
+    def log_likelihood(self, data):
+        with torch.no_grad():
+            llh = torch.log(self.density(data)).sum()
+
+            return llh
+
+    def eval_density_grid(self, n_points=100, grid=[-5, 5, -5, 5]):
+        if self.M != 2:
+            raise ValueError('Can only evaluate density grid for 2-dimensional data.')
+        x_range = np.linspace(grid[0], grid[1], n_points)
+        y_range = np.linspace(grid[2], grid[3], n_points)
+        X1, X2 = np.meshgrid(x_range, y_range)
+        XX = np.column_stack((X1.ravel(), X2.ravel()))
+        densities = self.density(
+            torch.tensor(XX, device=self.device)).cpu().numpy()
+
+        return (x_range, y_range), densities.reshape((n_points, n_points))
+
+    def unit_test(self, int_limits, opts=dict()):
+        """Integrates probablity density"""
+        return nquad(
+            lambda *args: self.density(
+                torch.tensor([args], device=self.device)).item(),
+            int_limits, opts=opts)
+
+    def unit_test_alt(self, n_points=100, grid=[-5, 5, -5, 5]):
+        (x_range, y_range), density = self.eval_density_grid(n_points=n_points,
+                                                             grid=grid)
+        density = density.sum()
+        height = (y_range[-1] - y_range[0]) / len(y_range)
+        width = (x_range[-1] - x_range[0]) / len(x_range)
+        scaled_density = density * width * height
+
+        return scaled_density
+
+    def eval_density_multi_grid(self, limits, n_points):
+        # Reshape limits
+        limits = torch.Tensor(limits).reshape(self.M, 2)
+        # Allocate interval ranges
+        grid_tensor = torch.zeros(self.M, n_points, device=self.device)
+        # Fill in interval ranges
+        for m, vals in enumerate(limits):
+            grid_tensor[m, :] = torch.linspace(vals[0], vals[1], n_points)
+
+        # Create meshgrid of points
+        mesh = torch.meshgrid([grid for grid in grid_tensor])
+        XX = torch.column_stack([x.ravel() for x in mesh]).to(self.device)
+
+        # Evaluate densities
+        densities = self.density(XX)
+
+        # Return ranges for M dimensions and all densities
+
+        if self.M == 2:
+            return (grid_tensor[0].numpy(), grid_tensor[1].numpy()), densities.reshape((n_points, n_points))
+        else:
+            return grid_tensor, densities
+
+    def unit_test_multidimensional(self, limits, n_points=1000):
+        grid_tensor, densities = self.eval_density_multi_grid(limits, n_points)
+        total_density = densities.sum()
+        if self.M == 2:
+            scaling = (grid_tensor[0][-1] - grid_tensor[0][0]) * (grid_tensor[1][-1] - grid_tensor[1][0]) / (
+                        n_points ** self.M)
+        else:
+            scaling = np.prod([(vals[-1] - vals[0]).item() for vals in grid_tensor]) / (n_points ** self.M)
+        scaled_density = total_density * scaling
+        return scaled_density
