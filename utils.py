@@ -1,5 +1,9 @@
+import os
+import pyro
+import torch
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+from models import GaussianMixtureModel, CPModel, TensorTrain
 
 def plot_train_loss(model, ax=None, figsize=(8,6)):
     if ax is None:
@@ -66,3 +70,47 @@ def plot_density_alt(model, data):
     ax2.set_aspect(1)
 
     plt.show()
+
+
+def save_model(model, model_name):
+    model_path = 'models/' + model_name
+
+    # Make sure not to overwrite existing saved models
+    if os.path.exists(model_path + '.pt'):
+        model_count = 2
+        model_path += '_' + str(model_count)
+
+        while os.path.exists(model_path + '.pt'):
+            model_count += 1
+            model_path = model_path.rsplit('_', maxsplit=1)[0] + '_' + str(model_count)
+    
+    model_type = type(model).__name__
+    model_kwargs = model.kwargs
+
+    torch.save({
+        'model_type': model_type,
+        'model_kwargs': model_kwargs,
+        'state_dict': model.state_dict(),
+        'pyro_params': pyro.get_param_store().get_state(),
+        'train_losses': model.train_losses
+    }, model_path + '.pt')
+
+
+def load_model(model_name, device='cpu'):
+    pyro.clear_param_store()
+
+    # Load model dict
+    model_path = 'models/' + model_name
+    model_dict = torch.load(model_path, map_location=device)
+
+    # Set model
+    model_dict['model_kwargs']['device'] = device
+    model = eval(model_dict['model_type'])(**model_dict['model_kwargs'])
+    model.load_state_dict(model_dict['state_dict'])
+    model.train_losses = model_dict['train_losses']
+    model.to(device)
+
+    # Set pyro param store
+    pyro.get_param_store().set_state(model_dict['pyro_params'])
+
+    return model
