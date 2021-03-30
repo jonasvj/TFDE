@@ -1,4 +1,5 @@
 # Imports
+import time
 import matplotlib.pyplot as plt
 import numpy as np
 import pyro
@@ -11,6 +12,7 @@ from torch import nn
 from torch.distributions import transform_to, biject_to
 from scipy.integrate import nquad
 from sklearn.cluster import KMeans
+from torch.utils.data import RandomSampler, BatchSampler
 
 
 class GaussianMixtureModel(PyroModule):
@@ -31,7 +33,7 @@ class GaussianMixtureModel(PyroModule):
         self.random_init()
 
         if 'cuda' in self.device:
-            self.cuda()
+            self.cuda(self.device)
         
         self.eval()
     
@@ -167,7 +169,7 @@ class CPModel(PyroModule):
         self.init_params()
 
         if 'cuda' in self.device:
-            self.cuda()
+            self.cuda(self.device)
 
         self.eval()
 
@@ -347,7 +349,7 @@ class TensorTrain(PyroModule):
         self.init_params()
 
         if 'cuda' in self.device:
-            self.cuda()
+            self.cuda(self.device)
         
         self.eval()
 
@@ -386,8 +388,8 @@ class TensorTrain(PyroModule):
             self.params[str(m)] = module
 
     @config_enumerate
-    def forward(self, data=None, n_samples=1000, n_dim=2):
-        N, M = data.shape if data is not None else (n_samples, n_dim)
+    def forward(self, data=None, n_samples=1000):
+        N, M = data.shape if data is not None else (n_samples, self.M)
 
         if M != self.M:
             raise ValueError('Incorrect number of data columns.')
@@ -395,7 +397,7 @@ class TensorTrain(PyroModule):
         # Empty tensor for data samples
         x_sample = torch.empty(N, M, device=self.device)
 
-        with pyro.plate('data', N):
+        with pyro.plate('data', size=N):
             # Sample k_0
             k_m_prev = pyro.sample(
                 'k_0',
@@ -424,22 +426,34 @@ class TensorTrain(PyroModule):
     def guide(self, data):
         pass
 
-    def fit_model(self, data, lr=3e-4, n_steps=10000, verbose=True):
+    def fit_model(self, data, lr=3e-4, mb_size=512, n_epochs=1000, verbose=True):
         self.train()
 
         adam = pyro.optim.Adam({"lr": lr})
-        svi = SVI(self, self.guide, adam, loss=TraceEnum_ELBO())
+        self.svi = SVI(self, self.guide, adam, loss=TraceEnum_ELBO())
 
-        for step in range(n_steps):
-            loss = svi.step(data)
+        for epoch in range(n_epochs):
+            epoch_start = time.time()
+
+            mbs = BatchSampler(
+                RandomSampler(range(len(data))),
+                batch_size=mb_size,
+                drop_last=False)
+
+            loss = 0
+            for mb_idx in mbs:
+                loss += self.svi.step(data[mb_idx])
+            
             self.train_losses.append(loss)
 
-            if step % 1000 == 0 and verbose:
-                print('[iter {}]  loss: {:.4f}'.format(step, loss))
+            epoch_end = time.time()
+            if epoch % 10 == 0 and verbose:
+                print('[epoch {}]  loss: {:.4f}, time: {:.1f}'.format(
+                    epoch, loss/len(data), epoch_end-epoch_start))
 
         self.eval()
 
-    def hot_start(self, data, n_starts=100):
+    def hot_start(self, data, sub_sample_size=None, n_starts=100):
         seeds = torch.multinomial(
             torch.ones(10000) / 10000, num_samples=n_starts)
         inits = list()
@@ -448,6 +462,10 @@ class TensorTrain(PyroModule):
         data_max = data.max(dim=0).values
         data_std = data.std(dim=0)
 
+        if sub_sample_size is not None:
+            sub_sample_idx = torch.randperm(len(data))[:sub_sample_size]
+            data = data[sub_sample_idx]
+    
         for seed in seeds:
             pyro.set_rng_seed(seed)
             pyro.clear_param_store()
@@ -458,7 +476,8 @@ class TensorTrain(PyroModule):
                              scale_max=data_std)
 
             # Get initial loss
-            self.fit_model(data, lr=0, n_steps=1, verbose=False)
+            self.fit_model(
+                data, lr=0, mb_size=len(data), n_epochs=1, verbose=False)
             loss = self.train_losses[-1]
 
             # Save loss and seed
@@ -592,7 +611,7 @@ class GaussianMixtureModelFull(PyroModule):
         self.train_losses = list()
 
         if 'cuda' in self.device:
-            self.cuda()
+            self.cuda(self.device)
 
         self.eval()
 
