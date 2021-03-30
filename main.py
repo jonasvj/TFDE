@@ -42,7 +42,7 @@ if model_type == 'TensorTrain':
     print("[Tensor train initialised]")
 else:
     model.init_from_data(data_train, k_means=True)
-model.fit_model(data_train, n_steps=250)
+model.fit_model(data_train, mb_size=len(data_train), n_epochs=250)
 
 #%%
 # Log likelihood of data
