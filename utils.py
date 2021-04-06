@@ -5,6 +5,9 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from models import GaussianMixtureModel, CPModel, TensorTrain
 
+import numpy as np
+from scipy import stats, linalg
+
 def plot_train_loss(model, ax=None, figsize=(8,6)):
     if ax is None:
         fig, ax = plt.subplots(figsize=figsize)
@@ -114,3 +117,79 @@ def load_model(model_name, device='cpu'):
     pyro.get_param_store().set_state(model_dict['pyro_params'])
 
     return model
+
+def partial_corr(C):
+    """
+    FROM: https://gist.github.com/fabianp/9396204419c7b638d38f
+
+    Returns the sample linear partial correlation coefficients between pairs of variables in C, controlling
+    for the remaining variables in C.
+    Parameters
+    ----------
+    C : array-like, shape (n, p)
+        Array with the different variables. Each column of C is taken as a variable
+    Returns
+    -------
+    P : array-like, shape (p, p)
+        P[i, j] contains the partial correlation of C[:, i] and C[:, j] controlling
+        for the remaining variables in C.
+    """
+
+    C = np.asarray(C)
+    p = C.shape[1]
+    P_corr = np.zeros((p, p), dtype=np.float)
+    for i in range(p):
+        P_corr[i, i] = 1
+        for j in range(i+1, p):
+            idx = np.ones(p, dtype=np.bool)
+            idx[i] = False
+            idx[j] = False
+            beta_i = linalg.lstsq(C[:, idx], C[:, j])[0]
+            beta_j = linalg.lstsq(C[:, idx], C[:, i])[0]
+
+            res_j = C[:, j] - C[:, idx].dot( beta_i)
+            res_i = C[:, i] - C[:, idx].dot(beta_j)
+
+            corr = stats.pearsonr(res_i, res_j)[0]
+            P_corr[i, j] = corr
+            P_corr[j, i] = corr
+
+    return P_corr
+
+def order_variables_partial_correlation(data):
+    P_og = np.abs(partial_corr(data))
+    n = len(P_og[:, 0])
+    n_sq = int(np.sqrt(n))
+    P_og -= np.identity(n)
+
+    # We start at first variable regardless
+    import random
+    import copy
+    best_chain = []
+    best_score = 0
+    for i in range(100):
+        P = copy.deepcopy(P_og)
+        score = 0
+        start_index = random.randint(0, n-1)
+        start_index = int(n/2)
+        chain = [start_index]
+        P[start_index, :] = 0
+        for i in range(n-1):
+            best_var = np.argmax(P[:, chain[-1]])
+            score += P[best_var, chain[-1]]
+            chain.append(best_var)
+            P[best_var, :] = 0
+        chain = np.array(chain)
+        #print(f'This ordering gave a score of {round(score, 2)}')
+        if score > best_score:
+            best_score = copy.deepcopy(score)
+            best_chain = copy.deepcopy(chain)
+
+    print(f'Best ordering gave {round(best_score, 2)} from the order {best_chain}')
+    #img = np.zeros((n_sq, n_sq), dtype=np.uint8)
+    #for i, pt in enumerate(best_chain):
+    #    img[int(pt//n_sq), int(pt%n_sq)] = int(((i)/n)*255)
+    #    plt.text(int(pt%n_sq), int(pt//n_sq), f"{i}")
+    #plt.imshow(img)
+    #plt.show()
+    return best_chain

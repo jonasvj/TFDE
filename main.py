@@ -21,7 +21,7 @@ n_dim = 2 # dimensions of data
 K = [2]*(n_dim + 1)
 
 # Load data
-data = load_data(data_type)
+data = load_data(data_type, optimal_order=False)
 data_train = torch.tensor(data.trn.x).to(device)
 data_val = torch.tensor(data.val.x).to(device)
 data_test = torch.tensor(data.tst.x).to(device)
@@ -56,10 +56,10 @@ plot_train_loss(model)
 # Generate new images if mnist
 if data_type.split('_')[0] == 'mnist':
     n_img = 16
-    images = model(n_samples=n_img, n_dim=n_dim).cpu().detach().numpy().reshape(n_img, int(np.sqrt(n_dim)), int(np.sqrt(n_dim)))
+    images = data.convert_to_image(model().detach().numpy())
     fig, ax = plt.subplots(nrows=4, ncols=4)
     for i in range(n_img):
-        ax[i//4, i%4].imshow(images[i, :, :])
+        ax[i//4, i%4].imshow(images[i])
     plt.show()
     exit(0)
 
