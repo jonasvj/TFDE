@@ -9,23 +9,45 @@ from .synthetic import EightGaussians
 from .synthetic import Checkerboard
 from .synthetic import TwoSpirals
 from .mnist import MNIST_4x4, MNIST_7x7, MNIST_8x8, MNIST_16x16, MNIST_28x28
+from utils import order_variables_partial_correlation
+
+def do_optimal_ordering(data):
+    ordering = order_variables_partial_correlation(data.trn.x)
+    data.trn.x = data.trn.x[:, ordering]
+    data.val.x = data.val.x[:, ordering]
+    data.tst.x = data.tst.x[:, ordering]
 
 def load_data(name, optimal_order=False):
 
     if name == 'power':
-        return POWER()
+        data = POWER()
+        if optimal_order:
+            do_optimal_ordering(data)
+        return data
 
     elif name == 'gas':
-        return GAS()
+        data = GAS()
+        if optimal_order:
+            do_optimal_ordering(data)
+        return data
 
     elif name == 'hepmass':
-        return HEPMASS()
+        data = HEPMASS()
+        if optimal_order:
+            do_optimal_ordering(data)
+        return data
 
     elif name == 'miniboone':
-        return MINIBOONE()
+        data = MINIBOONE()
+        if optimal_order:
+            do_optimal_ordering(data)
+        return data
 
     elif name == 'bsds300':
-        return BSDS300()
+        data = BSDS300()
+        if optimal_order:
+            do_optimal_ordering(data)
+        return data
 
     elif name == '8gaussians':
         return EightGaussians()
