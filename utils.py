@@ -8,10 +8,12 @@ from models import GaussianMixtureModel, CPModel, TensorTrain
 def plot_train_loss(model, ax=None, figsize=(8,6)):
     if ax is None:
         fig, ax = plt.subplots(figsize=figsize)
-    ax.plot(model.train_losses)
+    ax.plot(model.train_losses, label='Train')
+    ax.plot(model.val_losses, label='Validation')
     ax.set_xlabel('Iteration')
     ax.set_ylabel('Loss')
-    ax.set_title('Training loss')
+    ax.set_title('Learning curve')
+    ax.legend()
 
 
 def plot_density(model, data, density_grid=[-5, 5, -5, 5], axes=None,
@@ -92,7 +94,8 @@ def save_model(model, model_name):
         'model_kwargs': model_kwargs,
         'state_dict': model.state_dict(),
         'pyro_params': pyro.get_param_store().get_state(),
-        'train_losses': model.train_losses
+        'train_losses': model.train_losses,
+        'val_losses': model.val_losses,
     }, model_path + '.pt')
 
 
@@ -108,6 +111,8 @@ def load_model(model_name, device='cpu'):
     model = eval(model_dict['model_type'])(**model_dict['model_kwargs'])
     model.load_state_dict(model_dict['state_dict'])
     model.train_losses = model_dict['train_losses']
+    if 'val_losses' in model_dict:
+        model.val_losses = model_dict['val_losses']
     model.to(device)
 
     # Set pyro param store
