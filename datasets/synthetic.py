@@ -1,10 +1,6 @@
 import datasets
 import numpy as np
 
-seed = 42
-rng = np.random.RandomState(seed=seed)
-
-
 class EightGaussians:
 
     class Data:
@@ -64,6 +60,7 @@ class TwoSpirals:
 
 
 def load_data(root_path):
+    rng = np.random.RandomState(seed=42)
     data = np.load(root_path)
     rng.shuffle(data)
     n_train = int((1/3) * data.shape[0])
