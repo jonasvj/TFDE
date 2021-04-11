@@ -383,7 +383,8 @@ class TensorTrain(PyroModule):
                 constraint=constraints.positive)
             
             self.params[str(m)] = module
-
+    
+    @config_enumerate
     def forward(self, data=None, n_samples=1000):
         N, M = data.shape if data is not None else (n_samples, self.M)
 
@@ -416,6 +417,7 @@ class TensorTrain(PyroModule):
 
             return x_sample
     
+    @config_enumerate
     def forward_alt(self, data=None, n_samples=1000):
         N, M = data.shape if data is not None else (n_samples, self.M)
 
