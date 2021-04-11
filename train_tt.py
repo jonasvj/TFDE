@@ -1,62 +1,98 @@
 #!/usr/bin/env python3
-import os
 import sys
 import time
 import torch
+import argparse
 import numpy as np
 from utils import save_model
 from models import TensorTrain
-from datasets import load_data
+from datasets import load_data, all_datasets
+
+def cli():
+    parser = argparse.ArgumentParser(
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        allow_abbrev=False,
+        description='Script for training Tensor Train model')
+    
+    parser.add_argument(
+        'model_name',
+        help='Name to save model as.'
+    )
+    parser.add_argument(
+        '--dataset',
+        help='Dataset to fit model on.',
+        choices=all_datasets,
+        default='checkerboard'
+    )
+    parser.add_argument(
+        '--K',
+        help='Choice of K for tensor train model.',
+        type=int,
+        default=10
+    )
+    parser.add_argument(
+        '--mb_size',
+        help='Mini batch size.',
+        type=int,
+        default=256,
+    )
+    parser.add_argument(
+        '--lr',
+        help='Learning rate.',
+        type=float,
+        default=3e-4,
+    )
+    parser.add_argument(
+        '--epochs',
+        help='Number of training epochs.',
+        type=int,
+        default=500,
+    )
+    parser.add_argument(
+        '--subsample_size',
+        help='Subsample training data.',
+        type=int,
+        default=None
+    )
+    parser.add_argument(
+        '--optimal_order',
+        help='Whether to order attributes (1 for True and 0 for False).',
+        type=int,
+        default=0
+    )
+    parser.add_argument(
+        '--n_starts',
+        help='Number of initializations',
+        type=int,
+        default=500
+    )
+
+    return parser.parse_args()
 
 if __name__ == '__main__':
-    dataset = sys.argv[1]
-    mb_size = int(sys.argv[2])
-    lr = float(sys.argv[3])
-    K = int(sys.argv[4])
-    n_epochs = int(sys.argv[5])
-    run = int(sys.argv[6])
-    result_file = sys.argv[7]
+    args = cli()
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    model_name = 'TT_{}_{}_{}_{}_{}_{}'.format(
-        dataset, mb_size, lr, K, n_epochs, run)
-
-    data = load_data(dataset)
+    data = load_data(
+        args.dataset, 
+        optimal_order=bool(args.optimal_order),
+        subsample_size=args.subsample_size)
+    
     data_train = torch.tensor(data.trn.x).to(device)
     data_val = torch.tensor(data.val.x).to(device)
-    data_test = torch.tensor(data.tst.x).to(device)
-    print(data_train.shape)
+    del data
 
-    start = time.time()
-    Ks = [K]*(data_train.shape[1]+1)
+    train_start = time.time()
+
+    Ks = [args.K]*(data_train.shape[1]+1)
     model = TensorTrain(Ks=Ks, device=device)
-    model.hot_start(data_train, sub_sample_size=mb_size, n_starts=500)
-    model.fit_model(data_train, mb_size=mb_size, n_epochs=n_epochs, lr=lr)
-    end = time.time()
-    print(end - start)
+    model.hot_start(
+        data_train, subsample_size=args.subsample_size, n_starts=args.n_starts)
+    model.fit_model(
+        data_train, data_val=data_val, mb_size=args.mb_size,
+        n_epochs=args.epochs, lr=args.lr)
 
-    nllh_train = model.svi.evaluate_loss(data_train) / len(data_train)
-    nllh_val = model.svi.evaluate_loss(data_val) / len(data_val)
-    nllh_test = model.svi.evaluate_loss(data_test) / len(data_test)
-
-    print(nllh_train)
-    print(nllh_val)
-    print(nllh_test)
-
-    save_model(model, model_name)
-
-    output_string = '{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n'.format(
-        dataset, mb_size, lr, K, n_epochs, run,
-        nllh_train, nllh_val, nllh_test)
+    train_end = time.time()
+    print('Training time: {:.1f} seconds'.format(train_end-train_start))
     
-    while not os.path.exists(result_file):
-        time.sleep(1)
-    
-    # Simple semaphore lock
-    os.rename(result_file, result_file + '_locked')
-
-    file = open(result_file + '_locked', 'a')
-    file.write(output_string)
-    file.close()
-
-    os.rename(result_file + '_locked', result_file)
+    save_model(model, args.model_name)
