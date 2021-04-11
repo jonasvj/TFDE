@@ -1,12 +1,11 @@
 import os
 import pyro
 import torch
+import numpy as np
+from scipy import stats, linalg
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from models import GaussianMixtureModel, CPModel, TensorTrain
-
-import numpy as np
-from scipy import stats, linalg
 
 def plot_train_loss(model, ax=None, figsize=(8,6)):
     if ax is None:
@@ -114,8 +113,7 @@ def load_model(model_name, device='cpu'):
     model = eval(model_dict['model_type'])(**model_dict['model_kwargs'])
     model.load_state_dict(model_dict['state_dict'])
     model.train_losses = model_dict['train_losses']
-    if 'val_losses' in model_dict:
-        model.val_losses = model_dict['val_losses']
+    model.val_losses = model_dict['val_losses']
     model.to(device)
 
     # Set pyro param store
