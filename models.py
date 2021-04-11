@@ -1,19 +1,17 @@
 # Imports
-import time
-import matplotlib.pyplot as plt
-import numpy as np
 import pyro
 import torch
-import pyro.distributions as dist
-import pyro.distributions.constraints as constraints
-from pyro.infer import SVI, TraceEnum_ELBO, config_enumerate, infer_discrete
-from pyro.nn import PyroModule, PyroParam
+import numpy as np
 from torch import nn
-from torch.distributions import transform_to, biject_to
+import pyro.distributions as dist
 from scipy.integrate import nquad
 from sklearn.cluster import KMeans
+from pyro.ops.indexing import Vindex
+from pyro.nn import PyroModule, PyroParam
+from torch.distributions import transform_to
+import pyro.distributions.constraints as constraints
+from pyro.infer import SVI, TraceEnum_ELBO, config_enumerate
 from torch.utils.data import RandomSampler, BatchSampler
-
 
 class GaussianMixtureModel(PyroModule):
     """Gaussian Mixture Model following the CP formulation"""
@@ -137,8 +135,6 @@ class GaussianMixtureModel(PyroModule):
             return llh
 
     def eval_density_grid(self, n_points=100, grid=[-5, 5, -5, 5]):
-        if self.M != 2:
-            raise ValueError('Can only evaluate density grid for 2-dimensional data.')
         x_range = np.linspace(grid[0], grid[1], n_points)
         y_range = np.linspace(grid[2], grid[3], n_points)
         X1, X2 = np.meshgrid(x_range, y_range)
@@ -307,8 +303,6 @@ class CPModel(PyroModule):
             return llh
 
     def eval_density_grid(self, n_points=100):
-        if self.M != 2:
-            raise ValueError('Can only evaluate density grid for 2-dimensional data.')
         x_range = np.linspace(-5, 5, n_points)
         X1, X2 = np.meshgrid(x_range, x_range)
         XX = np.column_stack((X1.ravel(), X2.ravel()))
@@ -335,6 +329,7 @@ class TensorTrain(PyroModule):
         self.kwargs = {'Ks': Ks, 'device': device}
         self.M = len(self.Ks) - 1
         self.train_losses = list()
+        self.val_losses = list()
 
         # Weights for latent variable k_0
         self.k0_weights = PyroParam(
@@ -351,8 +346,9 @@ class TensorTrain(PyroModule):
         if 'cuda' in self.device:
             self.cuda(self.device)
         
-        self.eval()
-
+        if len(self.Ks) > 60:
+            self.forward = self.forward_alt
+        
     def init_params(self, loc_min=None, loc_max=None, scale_max=None):
 
         if loc_min is None:
@@ -376,23 +372,20 @@ class TensorTrain(PyroModule):
             
             # Locs for x_m
             module.locs = PyroParam(
-                dist.Uniform(min(-1e-6, loc_min[m-1]),
-                             max(1e-6, loc_max[m-1])).sample(param_shape).to(self.device),
+                dist.Uniform(loc_min[m-1]-1e-8, loc_max[m-1]+1e-8).sample(
+                    param_shape).to(self.device),
                 constraint=constraints.real)
             
             # Scales for x_m
             module.scales = PyroParam(
-                dist.Uniform(0, max(1e-6, scale_max[m-1])).sample(param_shape).to(self.device),
+                dist.Uniform(1e-8, scale_max[m-1]+1e-7).sample(
+                    param_shape).to(self.device),
                 constraint=constraints.positive)
             
             self.params[str(m)] = module
 
-    @config_enumerate
     def forward(self, data=None, n_samples=1000):
         N, M = data.shape if data is not None else (n_samples, self.M)
-
-        if M != self.M:
-            raise ValueError('Incorrect number of data columns.')
 
         # Empty tensor for data samples
         x_sample = torch.empty(N, M, device=self.device)
@@ -407,7 +400,7 @@ class TensorTrain(PyroModule):
                 # Sample k_m
                 k_m = pyro.sample(
                     f'k_{m + 1}',
-                    dist.Categorical(params.weights[k_m_prev]))
+                    dist.Categorical(Vindex(params.weights)[k_m_prev]))
 
                 # Observations of x_m
                 obs = data[:, m] if data is not None else None
@@ -415,9 +408,42 @@ class TensorTrain(PyroModule):
                 # Sample x_m
                 x_sample[:, m] = pyro.sample(
                     f'x_{m + 1}',
-                    dist.Normal(loc=params.locs[k_m_prev, k_m],
-                                scale=params.scales[k_m_prev, k_m]),
-                    obs=obs)
+                    dist.Normal(loc=Vindex(params.locs)[k_m_prev, k_m],
+                                scale=Vindex(params.scales)[k_m_prev, k_m]),
+                                obs=obs)
+
+                k_m_prev = k_m
+
+            return x_sample
+    
+    def forward_alt(self, data=None, n_samples=1000):
+        N, M = data.shape if data is not None else (n_samples, self.M)
+
+        # Empty tensor for data samples
+        x_sample = torch.empty(N, M, device=self.device)
+
+        with pyro.plate('data', size=N):
+            # Sample k_0
+            k_m_prev = pyro.sample(
+                'k_0',
+                dist.Categorical(self.k0_weights))
+
+            for m in pyro.markov(range(self.M)):
+                params = self.params[str(m +1)]
+                # Sample k_m
+                k_m = pyro.sample(
+                    f'k_{m + 1}',
+                    dist.Categorical(Vindex(params.weights)[k_m_prev]))
+
+                # Observations of x_m
+                obs = data[:, m] if data is not None else None
+
+                # Sample x_m
+                x_sample[:, m] = pyro.sample(
+                    f'x_{m + 1}',
+                    dist.Normal(loc=Vindex(params.locs)[k_m_prev, k_m],
+                                scale=Vindex(params.scales)[k_m_prev, k_m]),
+                                obs=obs)
 
                 k_m_prev = k_m
 
@@ -426,34 +452,37 @@ class TensorTrain(PyroModule):
     def guide(self, data):
         pass
 
-    def fit_model(self, data, lr=3e-4, mb_size=512, n_epochs=1000, verbose=True):
-        self.train()
+    def fit_model(self, data, data_val=None, lr=3e-4, mb_size=512,
+        n_epochs=500, verbose=True):
+        N_train = len(data)
+        if data_val is not None:
+            N_val = len(data_val)
 
         adam = pyro.optim.Adam({"lr": lr})
-        self.svi = SVI(self, self.guide, adam, loss=TraceEnum_ELBO())
+        svi = SVI(self, self.guide, adam, loss=TraceEnum_ELBO())
 
         for epoch in range(n_epochs):
-            epoch_start = time.time()
+            self.train()
 
             mbs = BatchSampler(
-                RandomSampler(range(len(data))),
+                RandomSampler(range(N_train)),
                 batch_size=mb_size,
                 drop_last=False)
 
             loss = 0
             for mb_idx in mbs:
-                loss += self.svi.step(data[mb_idx])
+                loss += svi.step(data[mb_idx])
             
-            self.train_losses.append(loss)
+            self.train_losses.append(loss/N_train)
+            
+            if data_val is not None:
+                self.eval()
+                self.val_losses.append(svi.evaluate_loss(data_val)/N_val)
 
-            epoch_end = time.time()
             if epoch % 10 == 0 and verbose:
-                print('[epoch {}]  loss: {:.4f}, time: {:.1f}'.format(
-                    epoch, loss/len(data), epoch_end-epoch_start))
+                print('[epoch {}]  loss: {:.4f}'.format(epoch, loss/N_train))
 
-        self.eval()
-
-    def hot_start(self, data, sub_sample_size=None, n_starts=100):
+    def hot_start(self, data, subsample_size=None, n_starts=100):
         seeds = torch.multinomial(
             torch.ones(10000) / 10000, num_samples=n_starts)
         inits = list()
@@ -462,9 +491,9 @@ class TensorTrain(PyroModule):
         data_max = data.max(dim=0).values
         data_std = data.std(dim=0)
 
-        if sub_sample_size is not None:
-            sub_sample_idx = torch.randperm(len(data))[:sub_sample_size]
-            data = data[sub_sample_idx]
+        if subsample_size is not None:
+            subsample_idx = torch.randperm(len(data))[:subsample_size]
+            data = data[subsample_idx]
     
         for seed in seeds:
             pyro.set_rng_seed(seed)
@@ -500,9 +529,6 @@ class TensorTrain(PyroModule):
         with torch.no_grad():
             N, M = data.shape
 
-            if M != self.M:
-                raise ValueError('Incorrect number of data columns.')
-
             # Intialize sum to neutral multiplier
             sum_ = torch.ones(1, 1, device=self.device)
 
@@ -530,8 +556,6 @@ class TensorTrain(PyroModule):
             return llh
 
     def eval_density_grid(self, n_points=100, grid=[-5, 5, -5, 5]):
-        if self.M != 2:
-            raise ValueError('Can only evaluate density grid for 2-dimensional data.')
         x_range = np.linspace(grid[0], grid[1], n_points)
         y_range = np.linspace(grid[2], grid[3], n_points)
         X1, X2 = np.meshgrid(x_range, y_range)
