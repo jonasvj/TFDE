@@ -455,10 +455,16 @@ class TensorTrain(PyroModule):
         pass
 
     def fit_model(self, data, data_val=None, lr=3e-4, mb_size=512,
-        n_epochs=500, verbose=True):
+        n_epochs=500, verbose=True, early_stopping=False):
         N_train = len(data)
         if data_val is not None:
             N_val = len(data_val)
+        else:
+            early_stopping = False
+        
+        # Variables for early-stopping
+        best_loss = np.inf
+        count = 0
 
         adam = pyro.optim.Adam({"lr": lr})
         svi = SVI(self, self.guide, adam, loss=TraceEnum_ELBO())
@@ -479,11 +485,24 @@ class TensorTrain(PyroModule):
             
             if data_val is not None:
                 self.eval()
-                self.val_losses.append(svi.evaluate_loss(data_val)/N_val)
+                val_loss = self.nllh(data_val) / N_val
+                self.val_losses.append(val_loss)
 
             if epoch % 10 == 0 and verbose:
                 print('[epoch {}]  loss: {:.4f}'.format(epoch, loss/N_train))
 
+            if early_stopping:
+                # Reset counter if val loss has improved by 0.1%
+                if val_loss < best_loss*(1 - 1e-3):
+                    best_loss = val_loss
+                    count = 0
+                else:
+                    count += 1
+                
+                # Break training loop if val loss has not improved in 10 epochs
+                if count == 10:
+                    break
+                
     def hot_start(self, data, subsample_size=None, n_starts=100):
         seeds = torch.multinomial(
             torch.ones(10000) / 10000, num_samples=n_starts)
@@ -526,6 +545,32 @@ class TensorTrain(PyroModule):
         self.init_params(loc_min=data_min,
                          loc_max=data_max,
                          scale_max=data_std)
+
+    def log_density(self, data):
+        with torch.no_grad():
+            N, M = data.shape
+            data = data.reshape(N, M, 1, 1) # N x M x 1 x 1
+            
+            # Initialize log density
+            log_density = torch.zeros(1,1,1, device=self.device) # 1 x 1 x 1
+            
+            for m, params in reversed(self.params.items()):
+                m = int(m) - 1
+                log_prob = dist.Normal(
+                    params.locs, params.scales).log_prob(data[:, m]) # N x K_{m-1} x K_m
+                log_weights = torch.log(params.weights).unsqueeze(0) # 1 x K_{m-1} x K_m
+                log_density = torch.logsumexp(
+                    log_weights + log_prob + log_density, dim=-1).unsqueeze(1) # N x 1 x K_{m-1}
+                
+            log_density = log_density.squeeze(1) # N x K_0
+            log_k0_weights = torch.log(self.k0_weights) # K_0
+            
+            return torch.logsumexp(log_k0_weights + log_density, dim=-1) # N
+    
+    def nllh(self, data):
+        with torch.no_grad():
+            log_density = self.log_density(data)
+            return -torch.sum(log_density).item()
 
     def density(self, data):
         with torch.no_grad():
@@ -616,7 +661,6 @@ class TensorTrain(PyroModule):
             scaling = np.prod([(vals[-1]-vals[0]).item() for vals in grid_tensor])/(n_points**self.M)
         scaled_density = total_density * scaling
         return scaled_density
-
 
 class GaussianMixtureModelFull(PyroModule):
     """Gaussian Mixture Model with full covariance matrix"""
