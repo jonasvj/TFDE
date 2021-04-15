@@ -164,15 +164,14 @@ def order_variables_partial_correlation(data):
     n = len(P_og[:, 0])
     P_og -= np.identity(n)
 
-    # We start at first variable regardless
-    import random
+    #import random
     import copy
     best_chain = []
     best_score = 0
-    for i in range(100):
+    for start_index in range(n):
         P = copy.deepcopy(P_og)
         score = 0
-        start_index = random.randint(0, n-1)
+        #start_index = random.randint(0, n-1)
         chain = [start_index]
         P[start_index, :] = 0
         for i in range(n-1):
@@ -185,12 +184,5 @@ def order_variables_partial_correlation(data):
             best_score = copy.deepcopy(score)
             best_chain = copy.deepcopy(chain)
 
-    print(f'Best ordering og variables were: {best_chain}')
-    #print(f'Best ordering gave a partial correlation score of {round(best_score, 2)} from the order {best_chain}')
-    #img = np.zeros((n_sq, n_sq), dtype=np.uint8)
-    #for i, pt in enumerate(best_chain):
-    #    img[int(pt//n_sq), int(pt%n_sq)] = int(((i)/n)*255)
-    #    plt.text(int(pt%n_sq), int(pt//n_sq), f"{i}")
-    #plt.imshow(img)
-    #plt.show()
+    print(f'Best ordering of variables were: {best_chain}')
     return best_chain
