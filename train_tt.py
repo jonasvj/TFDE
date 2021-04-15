@@ -66,6 +66,12 @@ def cli():
         type=int,
         default=500
     )
+    parser.add_argument(
+        '--early_stopping',
+        help='Whether to use early stopping (1 for True and 0 for False).',
+        type=int,
+        default=0
+    )
 
     return parser.parse_args()
 
@@ -90,7 +96,8 @@ if __name__ == '__main__':
         data_train, subsample_size=args.subsample_size, n_starts=args.n_starts)
     model.fit_model(
         data_train, data_val=data_val, mb_size=args.mb_size,
-        n_epochs=args.epochs, lr=args.lr)
+        n_epochs=args.epochs, lr=args.lr,
+        early_stopping=bool(args.early_stopping))
 
     train_end = time.time()
     print('Training time: {:.1f} seconds'.format(train_end-train_start))
