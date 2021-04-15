@@ -455,7 +455,7 @@ class TensorTrain(PyroModule):
         pass
 
     def fit_model(self, data, data_val=None, lr=3e-4, mb_size=512,
-        n_epochs=500, verbose=True, early_stopping=False):
+        n_epochs=500, verbose=True, early_stopping=True):
         N_train = len(data)
         if data_val is not None:
             N_val = len(data_val)
