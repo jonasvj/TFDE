@@ -23,6 +23,7 @@ class GaussianMixtureModel(PyroModule):
 		self.device = device
 		self.kwargs = {'K': K, 'M': M, 'device': device}
 		self.train_losses = list()
+		self.val_losses = list()
 		
 		self.weights = PyroParam(
 			(torch.ones(K, device=self.device) / K),
@@ -48,13 +49,10 @@ class GaussianMixtureModel(PyroModule):
 	def forward(self, data=None, n_samples=1000):
 		N, M = data.shape if data is not None else (n_samples, self.M)
 
-		if M != self.M:
-			raise ValueError('Incorrect number of data columns.')
-
 		# Empty tensor for data samples
 		x_sample = torch.empty(N, M, device=self.device)
 
-		with pyro.plate('data', N):
+		with pyro.plate('data', size=N):
 			# Sample cluster/component
 			k = pyro.sample('k', dist.Categorical(self.weights))
 
@@ -74,27 +72,57 @@ class GaussianMixtureModel(PyroModule):
 	def guide(self, data):
 		pass
 
-	def fit_model(self, data, lr=3e-4, n_steps=10000, verbose=True):
-		self.train()
-
-		N = len(data)
+	def fit_model(self, data, data_val=None, lr=3e-4, mb_size=512,
+		n_epochs=500, verbose=True, early_stopping=True):
+		N_train = len(data)
+		if data_val is not None:
+			N_val = len(data_val)
+		else:
+			early_stopping = False
+        
+        # Variables for early-stopping
+		best_loss = np.inf
+		count = 0
+		
 		adam = pyro.optim.Adam({"lr": lr})
 		svi = SVI(self, self.guide, adam, loss=TraceEnum_ELBO())
-
-		for step in range(n_steps):
-			loss = svi.step(data)
-			self.train_losses.append(loss)
-
-			if step % 1000 == 0 and verbose:
-				print('[iter {}]  loss: {:.4f}'.format(step, loss))
-
-		self.eval()
+		
+		for epoch in range(n_epochs):
+			self.train()
+			
+			mbs = BatchSampler(
+				RandomSampler(range(N_train)),
+				batch_size=mb_size,
+				drop_last=False)
+			
+			loss = 0
+			for mb_idx in mbs:
+				loss += svi.step(data[mb_idx])
+			
+			self.train_losses.append(loss/N_train)
+			
+			if data_val is not None:
+				self.eval()
+				val_loss = self.nllh(data_val) / N_val
+				self.val_losses.append(val_loss)
+			
+			if epoch % 10 == 0 and verbose:
+				print('[epoch {}]  loss: {:.4f}, {:.4f}'.format(epoch, loss/N_train))
+			
+			if early_stopping:
+				# Reset counter if val loss has improved by 0.1%
+				if val_loss < best_loss*(1 - 1e-3):
+					best_loss = val_loss
+					count = 0
+				else:
+					count += 1
+				
+				# Break training loop if val loss has not improved in 10 epochs
+				if count == 10:
+					break
 
 	def init_from_data(self, data, k_means=True):
 		N, M = data.shape
-
-		if M != self.M:
-			raise ValueError('Incorrect number of data columns.')
 
 		self.locs = PyroParam(
 			data[torch.multinomial(torch.ones(N) / N, self.K),],
@@ -112,6 +140,22 @@ class GaussianMixtureModel(PyroModule):
 			self.locs = PyroParam(
 				torch.tensor(locs, device=self.device),
 				constraint=constraints.real)
+	
+	def log_density(self, data):
+		with torch.no_grad():
+			data = data.unsqueeze(1) # N x 1 x M
+			log_weights = torch.log(self.weights) # K
+			log_probs = dist.Normal(
+				loc=self.locs,
+				scale=self.scales).log_prob(data) # N x K x M
+			log_probs = log_probs.sum(dim=-1) # N x K
+
+			return torch.logsumexp(log_weights + log_probs, dim=-1) # N
+	
+	def nllh(self, data):
+		with torch.no_grad():
+			log_density = self.log_density(data)
+			return -torch.sum(log_density).item()
 
 	def density(self, data):
 		with torch.no_grad():

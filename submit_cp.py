@@ -50,39 +50,37 @@ def write_bsub(command, model_name, sys_mem='64GB', hours='05', minutes='00',
     return bsub_file_name
 
 if __name__ == '__main__':
-    #datasets = ['power']
-    #K_range = [2, 3, 4, 6, 9, 12, 15, 18, 21, 24]
+
     #datasets = ['hepmass']
-    #K_range = [2, 3, 4, 5, 6, 7, 8, 9, 11, 13]
+    #K_range = [2, 28, 55, 82, 109, 136, 163, 190, 217, 244]
     datasets = ['miniboone']
-    K_range = [4, 6, 7, 8, 9]
+    K_range = [2, 15, 28, 41, 54, 67, 80, 93, 106, 120]
     mini_batch_sizes = [64]
     learning_rates = [3e-4]
     n_epochs = [300]
     subsample_sizes = [28000]
-    optimal_order = [0]
-    n_starts = [500]
+    optimal_order = [1]
     early_stopping = [1]
-    n_runs = range(1)
+    n_runs = range(3)
 
-    train_time = '8'
+    train_time = '10'
     queue = 'gpuv100'
 
     all_runs = product(
         datasets, K_range, mini_batch_sizes, learning_rates, n_epochs, 
-        subsample_sizes, optimal_order, n_starts, early_stopping, n_runs)
+        subsample_sizes, optimal_order, early_stopping, n_runs)
 
-    for dataset, K, mb_size, lr, epochs, subsample_size, order, n_start, early_stop, run in all_runs:
-        model_name = 'TT_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}'.format(
-            dataset, K, mb_size, lr, epochs, subsample_size, order, n_start, early_stop, run)
+    for dataset, K, mb_size, lr, epochs, subsample_size, order, early_stop, run in all_runs:
+        model_name = 'CP_{}_{}_{}_{}_{}_{}_{}_{}_{}'.format(
+            dataset, K, mb_size, lr, epochs, subsample_size, order, early_stop, run)
 
-        command = './train_tt.py --dataset {dataset} --K {K} ' \
+        command = './train_cp.py --dataset {dataset} --K {K} ' \
             '--mb_size {mb_size} --lr {lr} --epochs {epochs} ' \
             '--subsample_size {subsample_size} --optimal_order {order} ' \
-            '--n_starts {n_start} --early_stopping {early_stop} {model_name}' \
+            '--early_stopping {early_stop} {model_name}' \
             ''.format(
                 dataset=dataset, K=K, mb_size=mb_size, lr=lr, epochs=epochs,
-                subsample_size=subsample_size, order=order, n_start=n_start,
+                subsample_size=subsample_size, order=order,
                 early_stop=early_stop, model_name=model_name)
         
         bsub_file_name = write_bsub(

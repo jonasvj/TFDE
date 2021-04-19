@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
-import sys
 import time
 import torch
 import argparse
-import numpy as np
 from utils import save_model
-from models import TensorTrain
+from models import GaussianMixtureModel
 from datasets import load_data, all_datasets
 
 def cli():
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         allow_abbrev=False,
-        description='Script for training Tensor Train model')
+        description='Script for training CP model')
     
     parser.add_argument(
         'model_name',
@@ -26,7 +24,7 @@ def cli():
     )
     parser.add_argument(
         '--K',
-        help='Choice of K for tensor train model.',
+        help='Choice of K for CP model.',
         type=int,
         default=10
     )
@@ -61,12 +59,6 @@ def cli():
         default=0
     )
     parser.add_argument(
-        '--n_starts',
-        help='Number of initializations',
-        type=int,
-        default=500
-    )
-    parser.add_argument(
         '--early_stopping',
         help='Whether to use early stopping (1 for True and 0 for False).',
         type=int,
@@ -93,10 +85,8 @@ if __name__ == '__main__':
 
     train_start = time.time()
 
-    Ks = [args.K]*(data_train.shape[1]+1)
-    model = TensorTrain(Ks=Ks, device=device)
-    model.hot_start(
-        data_train, subsample_size=args.subsample_size, n_starts=args.n_starts)
+    model = GaussianMixtureModel(K=args.K, M=data_train.shape[1], device=device)
+    model.init_from_data(data_train, k_means=True)
     model.fit_model(
         data_train, data_val=data_val, mb_size=args.mb_size,
         n_epochs=args.epochs, lr=args.lr,
