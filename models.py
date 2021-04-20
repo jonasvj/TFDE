@@ -107,7 +107,7 @@ class GaussianMixtureModel(PyroModule):
 				self.val_losses.append(val_loss)
 			
 			if epoch % 10 == 0 and verbose:
-				print('[epoch {}]  loss: {:.4f}, {:.4f}'.format(epoch, loss/N_train))
+				print('[epoch {}]  loss: {:.4f}'.format(epoch, loss/N_train))
 			
 			if early_stopping:
 				# Reset counter if val loss has improved by 0.1%
