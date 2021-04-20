@@ -8,181 +8,191 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 from models import GaussianMixtureModel, CPModel, TensorTrain
 
 def plot_train_loss(model, ax=None, figsize=(8,6)):
-    if ax is None:
-        fig, ax = plt.subplots(figsize=figsize)
-    ax.plot(model.train_losses, label='Train')
-    ax.plot(model.val_losses, label='Validation')
-    ax.set_xlabel('Iteration')
-    ax.set_ylabel('Loss')
-    ax.set_title('Learning curve')
-    ax.legend()
+	if ax is None:
+		fig, ax = plt.subplots(figsize=figsize)
+	ax.plot(model.train_losses, label='Train')
+	ax.plot(model.val_losses, label='Validation')
+	ax.set_xlabel('Iteration')
+	ax.set_ylabel('Loss')
+	ax.set_title('Learning curve')
+	ax.legend()
 
 
 def plot_density(model, data, density_grid=[-5, 5, -5, 5], axes=None,
-    figsize=(16, 6)):
+	figsize=(16, 6)):
 
-    if axes is None:
-        fig, axes = plt.subplots(nrows=1, ncols=2, figsize=figsize)
-    
-    # Evaluate density grid
-    (x_range, y_range), density_eval = model.eval_density_grid(n_points=500,
-        grid=density_grid)
+	if axes is None:
+		fig, axes = plt.subplots(nrows=1, ncols=2, figsize=figsize)
+	
+	# Evaluate density grid
+	(x_range, y_range), density_eval = model.eval_density_grid(n_points=500,
+		grid=density_grid)
 
-    # Plot of data and contour lines of density
-    axes[0].plot(data[:,0], data[:,1], 'b.', markersize=1)
-    axes[0].contour(x_range, y_range, density_eval, colors='red')
-    axes[0].set_xlabel('x_1')
-    axes[0].set_ylabel('x_2')
-    axes[0].set_title('Data and contour lines of density')
+	# Plot of data and contour lines of density
+	axes[0].plot(data[:,0], data[:,1], 'b.', markersize=1)
+	axes[0].contour(x_range, y_range, density_eval, colors='red')
+	axes[0].set_xlabel('x_1')
+	axes[0].set_ylabel('x_2')
+	axes[0].set_title('Data and contour lines of density')
 
-    # Color map of density
-    cm = axes[1].pcolormesh(x_range, y_range, density_eval, cmap=plt.cm.RdBu_r,
-        shading='auto')
-    cbar = plt.colorbar(cm, ax=axes[1])
-    axes[1].set_xlabel('x_1')
-    axes[1].set_ylabel('x_2')
-    axes[1].set_title('Heat map of density')
+	# Color map of density
+	cm = axes[1].pcolormesh(x_range, y_range, density_eval, cmap=plt.cm.RdBu_r,
+		shading='auto')
+	cbar = plt.colorbar(cm, ax=axes[1])
+	axes[1].set_xlabel('x_1')
+	axes[1].set_ylabel('x_2')
+	axes[1].set_title('Heat map of density')
 
 
 def plot_density_alt(model, data):
-    (x_range, y_range), density_eval = model.eval_density_grid(n_points=500)
-    fig, [ax1, ax2] = plt.subplots(nrows=1, ncols=2,
-                                    figsize=(20, 10))
-    # Plot of data and contour lines of density
-    ax1.plot(data[:,0], data[:,1], 'b.', markersize=1)
-    ax1.contour(x_range, y_range, density_eval, colors='red')
-    ax1.set_xlabel('x_1')
-    ax1.set_ylabel('x_2')
-    ax1.set_title('Data and contour lines of density')
+	(x_range, y_range), density_eval = model.eval_density_grid(n_points=500)
+	fig, [ax1, ax2] = plt.subplots(nrows=1, ncols=2,
+									figsize=(20, 10))
+	# Plot of data and contour lines of density
+	ax1.plot(data[:,0], data[:,1], 'b.', markersize=1)
+	ax1.contour(x_range, y_range, density_eval, colors='red')
+	ax1.set_xlabel('x_1')
+	ax1.set_ylabel('x_2')
+	ax1.set_title('Data and contour lines of density')
 
-    # Color map of density
-    im = ax2.imshow(density_eval, interpolation='bicubic', cmap='winter', extent=[x_range[0], x_range[-1],
-           y_range[0], y_range[-1]], origin='lower')
+	# Color map of density
+	im = ax2.imshow(density_eval, interpolation='bicubic', cmap='winter', extent=[x_range[0], x_range[-1],
+		   y_range[0], y_range[-1]], origin='lower')
 
-    fig.subplots_adjust(bottom=0.1, top=0.9, left=0.1, right=0.8,
-                        wspace=0.1)
-    #divider = make_axes_locatable(ax2)
-    #cax = divider.append_axes("right", size="5%", pad=0.05)
-    cbar_ax = fig.add_axes([0.81, 0.175, 0.025, 0.65])
-    cbar = fig.colorbar(im, cax=cbar_ax )
+	fig.subplots_adjust(bottom=0.1, top=0.9, left=0.1, right=0.8,
+						wspace=0.1)
+	#divider = make_axes_locatable(ax2)
+	#cax = divider.append_axes("right", size="5%", pad=0.05)
+	cbar_ax = fig.add_axes([0.81, 0.175, 0.025, 0.65])
+	cbar = fig.colorbar(im, cax=cbar_ax )
 
-    ax2.set_xlabel('x_1')
-    ax2.set_ylabel('x_2')
-    ax2.set_title('Heat map of density')
+	ax2.set_xlabel('x_1')
+	ax2.set_ylabel('x_2')
+	ax2.set_title('Heat map of density')
 
-    ax1.set_aspect(1)
-    ax2.set_aspect(1)
+	ax1.set_aspect(1)
+	ax2.set_aspect(1)
 
-    plt.show()
+	plt.show()
 
 
 def save_model(model, model_name):
-    model_path = 'models/' + model_name
+	model_path = 'models/' + model_name
 
-    # Make sure not to overwrite existing saved models
-    if os.path.exists(model_path + '.pt'):
-        model_count = 2
-        model_path += '_' + str(model_count)
+	# Make sure not to overwrite existing saved models
+	if os.path.exists(model_path + '.pt'):
+		model_count = 2
+		model_path += '_' + str(model_count)
 
-        while os.path.exists(model_path + '.pt'):
-            model_count += 1
-            model_path = model_path.rsplit('_', maxsplit=1)[0] + '_' + str(model_count)
-    
-    model_type = type(model).__name__
-    model_kwargs = model.kwargs
+		while os.path.exists(model_path + '.pt'):
+			model_count += 1
+			model_path = model_path.rsplit('_', maxsplit=1)[0] + '_' + str(model_count)
+	
+	model_type = type(model).__name__
+	model_kwargs = model.kwargs
 
-    torch.save({
-        'model_type': model_type,
-        'model_kwargs': model_kwargs,
-        'state_dict': model.state_dict(),
-        'pyro_params': pyro.get_param_store().get_state(),
-        'train_losses': model.train_losses,
-        'val_losses': model.val_losses,
-    }, model_path + '.pt')
+	torch.save({
+		'model_type': model_type,
+		'model_kwargs': model_kwargs,
+		'state_dict': model.state_dict(),
+		'pyro_params': pyro.get_param_store().get_state(),
+		'train_losses': model.train_losses,
+		'val_losses': model.val_losses,
+	}, model_path + '.pt')
 
 
 def load_model(model_name, device='cpu'):
-    pyro.clear_param_store()
+	pyro.clear_param_store()
 
-    # Load model dict
-    model_path = 'models/' + model_name
-    model_dict = torch.load(model_path, map_location=device)
+	# Load model dict
+	model_path = 'models/' + model_name
+	model_dict = torch.load(model_path, map_location=device)
 
-    # Set model
-    model_dict['model_kwargs']['device'] = device
-    model = eval(model_dict['model_type'])(**model_dict['model_kwargs'])
-    model.load_state_dict(model_dict['state_dict'])
-    model.train_losses = model_dict['train_losses']
-    model.val_losses = model_dict['val_losses']
-    model.to(device)
+	# Set model
+	model_dict['model_kwargs']['device'] = device
+	model = eval(model_dict['model_type'])(**model_dict['model_kwargs'])
+	model.load_state_dict(model_dict['state_dict'])
+	model.train_losses = model_dict['train_losses']
+	model.val_losses = model_dict['val_losses']
+	model.to(device)
 
-    # Set pyro param store
-    pyro.get_param_store().set_state(model_dict['pyro_params'])
+	# Set pyro param store
+	pyro.get_param_store().set_state(model_dict['pyro_params'])
 
-    return model
+	return model
 
 def partial_corr(C):
-    """
-    FROM: https://gist.github.com/fabianp/9396204419c7b638d38f
+	"""
+	FROM: https://gist.github.com/fabianp/9396204419c7b638d38f
 
-    Returns the sample linear partial correlation coefficients between pairs of variables in C, controlling
-    for the remaining variables in C.
-    Parameters
-    ----------
-    C : array-like, shape (n, p)
-        Array with the different variables. Each column of C is taken as a variable
-    Returns
-    -------
-    P : array-like, shape (p, p)
-        P[i, j] contains the partial correlation of C[:, i] and C[:, j] controlling
-        for the remaining variables in C.
-    """
+	Returns the sample linear partial correlation coefficients between pairs of variables in C, controlling
+	for the remaining variables in C.
+	Parameters
+	----------
+	C : array-like, shape (n, p)
+		Array with the different variables. Each column of C is taken as a variable
+	Returns
+	-------
+	P : array-like, shape (p, p)
+		P[i, j] contains the partial correlation of C[:, i] and C[:, j] controlling
+		for the remaining variables in C.
+	"""
 
-    C = np.asarray(C)
-    p = C.shape[1]
-    P_corr = np.zeros((p, p), dtype=np.float)
-    for i in range(p):
-        P_corr[i, i] = 1
-        for j in range(i+1, p):
-            idx = np.ones(p, dtype=np.bool)
-            idx[i] = False
-            idx[j] = False
-            beta_i = linalg.lstsq(C[:, idx], C[:, j])[0]
-            beta_j = linalg.lstsq(C[:, idx], C[:, i])[0]
+	C = np.asarray(C)
+	p = C.shape[1]
+	P_corr = np.zeros((p, p), dtype=np.float)
+	for i in range(p):
+		P_corr[i, i] = 1
+		for j in range(i+1, p):
+			idx = np.ones(p, dtype=np.bool)
+			idx[i] = False
+			idx[j] = False
+			beta_i = linalg.lstsq(C[:, idx], C[:, j])[0]
+			beta_j = linalg.lstsq(C[:, idx], C[:, i])[0]
 
-            res_j = C[:, j] - C[:, idx].dot( beta_i)
-            res_i = C[:, i] - C[:, idx].dot(beta_j)
+			res_j = C[:, j] - C[:, idx].dot( beta_i)
+			res_i = C[:, i] - C[:, idx].dot(beta_j)
 
-            corr = stats.pearsonr(res_i, res_j)[0]
-            P_corr[i, j] = corr
-            P_corr[j, i] = corr
+			corr = stats.pearsonr(res_i, res_j)[0]
+			P_corr[i, j] = corr
+			P_corr[j, i] = corr
 
-    return P_corr
+	return P_corr
 
 def order_variables_partial_correlation(data):
-    P_og = np.abs(partial_corr(data))
-    n = len(P_og[:, 0])
-    P_og -= np.identity(n)
+	P_og = np.abs(partial_corr(data))
+	n = len(P_og[:, 0])
+	P_og -= np.identity(n)
 
-    #import random
-    import copy
-    best_chain = []
-    best_score = 0
-    for start_index in range(n):
-        P = copy.deepcopy(P_og)
-        score = 0
-        #start_index = random.randint(0, n-1)
-        chain = [start_index]
-        P[start_index, :] = 0
-        for i in range(n-1):
-            best_var = np.argmax(P[:, chain[-1]])
-            score += P[best_var, chain[-1]]
-            chain.append(best_var)
-            P[best_var, :] = 0
-        chain = np.array(chain)
-        if score > best_score:
-            best_score = copy.deepcopy(score)
-            best_chain = copy.deepcopy(chain)
+	#import random
+	import copy
+	best_chain = []
+	best_score = 0
+	for start_index in range(n):
+		P = copy.deepcopy(P_og)
+		score = 0
+		#start_index = random.randint(0, n-1)
+		chain = [start_index]
+		P[start_index, :] = 0
+		for i in range(n-1):
+			best_var = np.argmax(P[:, chain[-1]])
+			score += P[best_var, chain[-1]]
+			chain.append(best_var)
+			P[best_var, :] = 0
+		chain = np.array(chain)
+		if score > best_score:
+			best_score = copy.deepcopy(score)
+			best_chain = copy.deepcopy(chain)
 
-    print(f'Best ordering of variables were: {best_chain}')
-    return best_chain
+	print(f'Best ordering of variables were: {best_chain}')
+	return best_chain
+
+
+def tt_num_par(M, K):
+	return (K-1) + M*K*(K-1) + 2*M*K*K
+
+def cp_num_par(M, K):
+	return  (K-1) + 2*M*K
+
+def fullgmm_num_par(M, K):
+	return (K-1) + (2*M + M*(M-1)/2)*K
