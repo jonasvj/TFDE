@@ -12,6 +12,7 @@ from torch.distributions import transform_to
 import pyro.distributions.constraints as constraints
 from pyro.infer import SVI, TraceEnum_ELBO, config_enumerate
 from torch.utils.data import RandomSampler, BatchSampler
+from sklearn.covariance import EmpiricalCovariance
 
 class GaussianMixtureModel(PyroModule):
 	"""Gaussian Mixture Model following the CP formulation"""
@@ -959,6 +960,195 @@ class GaussianMixtureModelFull(PyroModule):
 		scaled_density = total_density * scaling
 		return scaled_density
 
+class GaussianMixtureModelFullAlt(PyroModule):
+    """Gaussian Mixture Model with full covariance matrix"""
+
+    def __init__(self, K, M, device='cpu'):
+        super().__init__()
+        self.device = device
+        self.K = K
+        self.M = M
+        self.kwargs = {'K': self.K, 'M': self.M, 'device': self.device}
+        self.train_losses = list()
+        self.val_losses = list()
+        
+        if 'cuda' in self.device:
+            self.cuda(self.device)
+        
+        self.random_init()
+        self.eval()
+        
+    def random_init(self):
+        
+        self.weights = PyroParam(
+            torch.ones(self.K, device=self.device) / self.K,
+            constraint=dist.constraints.simplex)
+        
+        self.locs = PyroParam(
+            torch.rand(self.K, self.M, device=self.device),
+            constraint=constraints.real)
+        
+        self.scale_tril = PyroParam(
+            dist.LKJCholesky(self.M).sample((self.K,)).to(self.device),
+            constraint=constraints.lower_cholesky)
+    
+    @config_enumerate
+    def forward(self, data=None):
+        N, M = data.shape if data is not None else (1000, self.M)
+
+        with pyro.plate('data', N):
+            # Sample cluster/component
+            k = pyro.sample('k', dist.Categorical(self.weights))
+
+            x_sample = pyro.sample('x_sample',
+                                   dist.MultivariateNormal(
+                                       loc=Vindex(self.locs)[k],
+                                       scale_tril=Vindex(self.scale_tril)[k]),
+                                   obs=data)
+
+            return x_sample
+
+    def init_from_data(self, data):
+        data_np = data.cpu().numpy()
+        
+        k_means_model = KMeans(self.K)
+        k_means_model.fit(data_np)
+        locs = k_means_model.cluster_centers_
+        labels = k_means_model.predict(data_np)
+        
+        self.locs = PyroParam(
+            torch.tensor(locs, device=self.device),
+            constraint=constraints.real)
+        
+        weights = torch.zeros(self.K)
+        scale_tril = torch.zeros(self.K, self.M, self.M)
+
+        for k in range(self.K):
+            weights[k] = np.sum(labels==k) / len(data_np)
+            cov = EmpiricalCovariance(store_precision=False).fit(data_np[labels==k])
+            try:
+                L = np.linalg.cholesky(cov.covariance_)
+            except np.linalg.LinAlgError:
+                L = np.linalg.cholesky(np.eye(self.M))
+            scale_tril[k,:,:] = torch.tensor(L)
+        
+        self.weights = PyroParam(
+            weights.to(self.device),
+            constraint=dist.constraints.simplex)
+        
+        self.scale_tril = PyroParam(
+            scale_tril.to(self.device),
+            constraint=constraints.lower_cholesky)
+
+    def guide(self, data):
+        pass
+
+    def fit_model(self, data, data_val=None, lr=3e-4, mb_size=512,
+        n_epochs=500, verbose=True, early_stopping=True):
+        N_train = len(data)
+        if data_val is not None:
+            N_val = len(data_val)
+        else:
+            early_stopping = False
+        
+        # Variables for early-stopping
+        best_loss = np.inf
+        count = 0
+
+        adam = pyro.optim.Adam({"lr": lr})
+        svi = SVI(self, self.guide, adam, loss=TraceEnum_ELBO())
+
+        for epoch in range(n_epochs):
+            self.train()
+
+            mbs = BatchSampler(
+                RandomSampler(range(N_train)),
+                batch_size=mb_size,
+                drop_last=False)
+
+            loss = 0
+            for mb_idx in mbs:
+                loss += svi.step(data[mb_idx])
+            
+            self.train_losses.append(loss/N_train)
+            
+            if data_val is not None:
+                self.eval()
+                val_loss = self.nllh(data_val) / N_val
+                self.val_losses.append(val_loss)
+
+            if epoch % 10 == 0 and verbose:
+                print('[epoch {}]  loss: {:.4f}'.format(epoch, loss/N_train))
+
+            if early_stopping:
+                # Reset counter if val loss has improved by 0.1%
+                if val_loss < best_loss*(1 - 1e-3):
+                    best_loss = val_loss
+                    count = 0
+                else:
+                    count += 1
+                
+                # Break training loop if val loss has not improved in 10 epochs
+                if count == 10:
+                    break
+    
+    def log_density(self, data):
+        with torch.no_grad():
+            N, M = data.shape
+            data = data.reshape(N, 1, M)
+            
+            log_weights = torch.log(self.weights)
+            log_prob = dist.MultivariateNormal(
+                loc=self.locs,
+                scale_tril=self.scale_tril).log_prob(data)
+            
+            return torch.logsumexp(log_weights + log_prob, dim=-1)
+    
+    def nllh(self, data):
+        with torch.no_grad():
+            log_density = self.log_density(data)
+            return -torch.sum(log_density).item()
+
+    def density(self, data):
+        with torch.no_grad():
+            N, M = data.shape
+
+            if M != self.M:
+                raise ValueError('Incorrect number of data columns.')
+
+            density = torch.zeros(data.shape[0], device=self.device)
+            for k in range(self.K):
+                density += self.weights[k]* torch.exp(dist.MultivariateNormal(loc=self.locs[k].double(),
+                                                       scale_tril=self.scale_tril[k].double()).log_prob(data))
+            return density
+
+    def log_likelihood(self, data):
+        with torch.no_grad():
+            llh = torch.log(self.density(data)).sum()
+
+            return llh
+
+    def eval_density_grid(self, n_points=100, grid=[-5, 5, -5, 5]):
+        if self.M != 2:
+            raise ValueError('Can only evaluate density grid for 2-dimensional data.')
+        x_range = np.linspace(grid[0], grid[1], n_points)
+        y_range = np.linspace(grid[2], grid[3], n_points)
+        X1, X2 = np.meshgrid(x_range, y_range)
+        XX = np.column_stack((X1.ravel(), X2.ravel()))
+        densities = self.density(
+            torch.tensor(XX, device=self.device)).cpu().numpy()
+
+        return (x_range, y_range), densities.reshape((n_points, n_points))
+
+    def unit_test_alt(self, n_points=100, grid=[-5, 5, -5, 5]):
+        (x_range, y_range), density = self.eval_density_grid(n_points=n_points,
+                                                             grid=grid)
+        density = density.sum()
+        height = (y_range[-1] - y_range[0]) / len(y_range)
+        width = (x_range[-1] - x_range[0]) / len(x_range)
+        scaled_density = density * width * height
+
+        return scaled_density
 
 
 class TensorRing(PyroModule):
