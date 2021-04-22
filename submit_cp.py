@@ -51,19 +51,19 @@ def write_bsub(command, model_name, sys_mem='64GB', hours='05', minutes='00',
 
 if __name__ == '__main__':
 
-    #datasets = ['hepmass']
-    #K_range = [2, 28, 55, 82, 109, 136, 163, 190, 217, 244]
-    datasets = ['miniboone']
-    K_range = [2, 15, 28, 41, 54, 67, 80, 93, 106, 120]
+    datasets = ['hepmass']
+    K_range = [2, 28, 55, 82, 109, 136, 163, 190, 217, 244]
+    #datasets = ['miniboone']
+    #K_range = [2, 15, 28, 41, 54, 67, 80, 93, 106, 120]
     mini_batch_sizes = [64]
     learning_rates = [3e-4]
-    n_epochs = [300]
-    subsample_sizes = [28000]
+    n_epochs = [1200]
+    subsample_sizes = [1750]
     optimal_order = [1]
     early_stopping = [1]
     n_runs = range(3)
 
-    train_time = '10'
+    train_time = '8'
     queue = 'gpuv100'
 
     all_runs = product(
