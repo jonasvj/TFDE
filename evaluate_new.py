@@ -8,16 +8,24 @@ from utils import load_model
 from datasets import load_data
 
 model_list = os.listdir('models/')
-result_file = 'results/tt_subsample_results.txt'
+result_file = 'results/results.txt'
 col_names = [
-    'dataset', 'K', 'mb_size', 'lr', 'epochs', 'subsample_size',
+    'model_type', 'dataset', 'K', 'mb_size', 'lr', 'epochs', 'subsample_size',
     'optimal_order', 'n_start', 'early_stop', 'run', 'nllh_train', 'nllh_val', 'nllh_test']
 
 results = {key: list() for key in col_names}
 
 for model_name in model_list:
-    dataset, K, mb_size, lr, epochs, subsample_size, order, n_start, early_stop, run = model_name[:-3].split('_')[1:]
+    params = model_name[:-3].split('_')
+    model_type = params[0]
 
+    if model_type == 'TT':
+        dataset, K, mb_size, lr, epochs, subsample_size, order, n_start, early_stop, run = params[1:]
+    
+    elif model_type in ['CP', 'GMM']:
+        dataset, K, mb_size, lr, epochs, subsample_size, order, early_stop, run = params[1:]
+        n_start = 1
+       
     model = load_model(model_name)
    
     data = load_data(
@@ -35,6 +43,7 @@ for model_name in model_list:
     nllh_val = model.nllh(data_val) / len(data_val)
     nllh_test = model.nllh(data_test) / len(data_test)
     
+    results['model_type'].append(model_type)
     results['dataset'].append(dataset)
     results['K'].append(K)
     results['mb_size'].append(mb_size)

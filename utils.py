@@ -5,7 +5,7 @@ import numpy as np
 from scipy import stats, linalg
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
-from models import GaussianMixtureModel, CPModel, TensorTrain
+from models import GaussianMixtureModel, CPModel, TensorTrain, GaussianMixtureModelFullAlt
 
 def plot_train_loss(model, ax=None, figsize=(8,6)):
 	if ax is None:

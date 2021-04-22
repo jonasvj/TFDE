@@ -51,19 +51,19 @@ def write_bsub(command, model_name, sys_mem='64GB', hours='05', minutes='00',
 
 if __name__ == '__main__':
 
-    datasets = ['hepmass']
-    K_range = [2, 28, 55, 82, 109, 136, 163, 190, 217, 244]
-    #datasets = ['miniboone']
-    #K_range = [2, 15, 28, 41, 54, 67, 80, 93, 106, 120]
+    #datasets = ['hepmass']
+    #K_range = [2, 6, 10, 15, 19, 23, 28, 32, 36, 41]
+    datasets = ['miniboone']
+    K_range = [2, 3, 4, 5, 6, 7, 8, 9, 10]
     mini_batch_sizes = [64]
     learning_rates = [3e-4]
-    n_epochs = [1200]
-    subsample_sizes = [1750]
+    n_epochs = [300]
+    subsample_sizes = [28000]
     optimal_order = [1]
     early_stopping = [1]
     n_runs = range(3)
 
-    train_time = '8'
+    train_time = '10'
     queue = 'gpuv100'
 
     all_runs = product(
@@ -71,10 +71,10 @@ if __name__ == '__main__':
         subsample_sizes, optimal_order, early_stopping, n_runs)
 
     for dataset, K, mb_size, lr, epochs, subsample_size, order, early_stop, run in all_runs:
-        model_name = 'CP_{}_{}_{}_{}_{}_{}_{}_{}_{}'.format(
+        model_name = 'GMM_{}_{}_{}_{}_{}_{}_{}_{}_{}'.format(
             dataset, K, mb_size, lr, epochs, subsample_size, order, early_stop, run)
 
-        command = './train_cp.py --dataset {dataset} --K {K} ' \
+        command = './train_gmm.py --dataset {dataset} --K {K} ' \
             '--mb_size {mb_size} --lr {lr} --epochs {epochs} ' \
             '--subsample_size {subsample_size} --optimal_order {order} ' \
             '--early_stopping {early_stop} {model_name}' \

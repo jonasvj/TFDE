@@ -50,22 +50,35 @@ def write_bsub(command, model_name, sys_mem='64GB', hours='05', minutes='00',
     return bsub_file_name
 
 if __name__ == '__main__':
+
+    #datasets = ['power', 'gas', 'hepmass']
+    #K_range = [50, 100]
+    #mini_batch_sizes = [8192]
+    #learning_rates = [3e-4]
+    #n_epochs = [500]
+    #subsample_sizes = [0]
+    #optimal_order = [0]
+    #n_starts = [500]
+    #early_stopping = [0]
+    #n_runs = range(3)
+    
+
     #datasets = ['power']
     #K_range = [2, 3, 4, 6, 9, 12, 15, 18, 21, 24]
     #datasets = ['hepmass']
-    #K_range = [2, 3, 4, 5, 6, 7, 8, 9, 11, 13]
+    #K_range = [9, 11, 13]
     datasets = ['miniboone']
-    K_range = [4, 6, 7, 8, 9]
+    K_range = [4, 5, 6, 7, 8, 9]
     mini_batch_sizes = [64]
     learning_rates = [3e-4]
     n_epochs = [300]
     subsample_sizes = [28000]
-    optimal_order = [0]
+    optimal_order = [1]
     n_starts = [500]
     early_stopping = [1]
-    n_runs = range(1)
+    n_runs = range(10)
 
-    train_time = '8'
+    train_time = '10'
     queue = 'gpuv100'
 
     all_runs = product(
