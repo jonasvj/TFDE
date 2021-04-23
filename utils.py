@@ -5,7 +5,8 @@ import numpy as np
 from scipy import stats, linalg
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
-from models import GaussianMixtureModel, CPModel, TensorTrain, GaussianMixtureModelFullAlt
+from models import TensorTrain, TensorRingAlt
+from models import CPModel, GaussianMixtureModel, GaussianMixtureModelFullAlt
 
 def plot_train_loss(model, ax=None, figsize=(8,6)):
 	if ax is None:
@@ -159,33 +160,35 @@ def partial_corr(C):
 
 	return P_corr
 
-def order_variables_partial_correlation(data):
-	P_og = np.abs(partial_corr(data))
-	n = len(P_og[:, 0])
-	P_og -= np.identity(n)
-
-	#import random
-	import copy
-	best_chain = []
-	best_score = 0
-	for start_index in range(n):
-		P = copy.deepcopy(P_og)
-		score = 0
-		#start_index = random.randint(0, n-1)
-		chain = [start_index]
-		P[start_index, :] = 0
-		for i in range(n-1):
-			best_var = np.argmax(P[:, chain[-1]])
-			score += P[best_var, chain[-1]]
-			chain.append(best_var)
-			P[best_var, :] = 0
-		chain = np.array(chain)
-		if score > best_score:
-			best_score = copy.deepcopy(score)
-			best_chain = copy.deepcopy(chain)
-
-	print(f'Best ordering of variables were: {best_chain}')
-	return best_chain
+def order_variables_partial_correlation(data, tr=False):
+    P_og = np.abs(partial_corr(data)) # partial correlation
+    #P_og = np.abs(np.corrcoef(data.T)) # correlation
+    n = len(P_og[:, 0])
+    P_og -= np.identity(n)
+ 
+    # We start at first variable regardless
+    import copy
+    best_chain = []
+    best_score = 0
+    for start_index in range(n):
+        P = copy.deepcopy(P_og)
+        score = 0
+        chain = [start_index]
+        P[start_index, :] = 0
+        for i in range(n-1):
+            best_var = np.argmax(P[:, chain[-1]])
+            score += P[best_var, chain[-1]]
+            chain.append(best_var)
+            P[best_var, :] = 0
+        if tr: # looping first and last element together
+            score += P_og[chain[0], chain[-1]]
+        chain = np.array(chain)
+        if score > best_score:
+            best_score = copy.deepcopy(score)
+            best_chain = copy.deepcopy(chain)
+ 
+    print(f'Best ordering og variables were: {best_chain}')
+    return best_chain
 
 
 def tt_num_par(M, K):

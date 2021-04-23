@@ -22,13 +22,13 @@ def subsample_train_data(data, subsample_size):
     rng.shuffle(data.trn.x)
     data.trn.x = data.trn.x[:subsample_size]
 
-def do_optimal_ordering(data):
-    ordering = order_variables_partial_correlation(data.trn.x)
+def do_optimal_ordering(data, tr=False):
+    ordering = order_variables_partial_correlation(data.trn.x, tr=tr)
     data.trn.x = data.trn.x[:, ordering]
     data.val.x = data.val.x[:, ordering]
     data.tst.x = data.tst.x[:, ordering]
 
-def load_data(name, optimal_order=False, subsample_size=None):
+def load_data(name, optimal_order=False, subsample_size=None, tr=False):
 
     if name == 'power':
         data = POWER()
@@ -37,7 +37,7 @@ def load_data(name, optimal_order=False, subsample_size=None):
             subsample_train_data(data, subsample_size)
         
         if optimal_order:
-            do_optimal_ordering(data)
+            do_optimal_ordering(data, tr=tr)
         
         return data
 
@@ -48,10 +48,9 @@ def load_data(name, optimal_order=False, subsample_size=None):
             subsample_train_data(data, subsample_size)
         
         if optimal_order:
-            do_optimal_ordering(data)
+            do_optimal_ordering(data, tr=tr)
         
         return data
-
 
     elif name == 'hepmass':
         data = HEPMASS()
@@ -60,7 +59,7 @@ def load_data(name, optimal_order=False, subsample_size=None):
             subsample_train_data(data, subsample_size)
         
         if optimal_order:
-            do_optimal_ordering(data)
+            do_optimal_ordering(data, tr=tr)
         
         return data
 
@@ -71,7 +70,7 @@ def load_data(name, optimal_order=False, subsample_size=None):
             subsample_train_data(data, subsample_size)
         
         if optimal_order:
-            do_optimal_ordering(data)
+            do_optimal_ordering(data, tr=tr)
         
         return data
 
@@ -82,7 +81,7 @@ def load_data(name, optimal_order=False, subsample_size=None):
             subsample_train_data(data, subsample_size)
         
         if optimal_order:
-            do_optimal_ordering(data)
+            do_optimal_ordering(data, tr=tr)
         
         return data
 
