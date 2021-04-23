@@ -65,10 +65,10 @@ class GaussianMixtureModel(PyroModule):
 				x_sample[:, m] = pyro.sample(
 					f'x_{m}',
 					dist.Normal(loc=self.locs[k, m],
-								scale=self.scales[k, m]),
+								scale=self.scales[k, m]+1e-9),
 					obs=obs)
 
-			return x_sample
+			return x_sampleq
 	
 	def guide(self, data):
 		pass
@@ -455,7 +455,7 @@ class TensorTrain(PyroModule):
 				x_sample[:, m] = pyro.sample(
 					f'x_{m + 1}',
 					dist.Normal(loc=Vindex(params.locs)[k_m_prev, k_m],
-								scale=Vindex(params.scales)[k_m_prev, k_m]),
+								scale=Vindex(params.scales)[k_m_prev, k_m]+1e-9),
 								obs=obs)
 
 				k_m_prev = k_m
@@ -489,7 +489,7 @@ class TensorTrain(PyroModule):
 				x_sample[:, m] = pyro.sample(
 					f'x_{m + 1}',
 					dist.Normal(loc=Vindex(params.locs)[k_m_prev, k_m],
-								scale=Vindex(params.scales)[k_m_prev, k_m]),
+								scale=Vindex(params.scales)[k_m_prev, k_m]+1e-9),
 								obs=obs)
 
 				k_m_prev = k_m
@@ -1615,7 +1615,7 @@ class TensorRingAlt(PyroModule):
 				x_sample[:, m] = pyro.sample(
 					f'x_{m + 1}',
 					dist.Normal(loc=Vindex(params.locs)[k_m_prev, k_m],
-								scale=Vindex(params.scales)[k_m_prev, k_m]),
+								scale=Vindex(params.scales)[k_m_prev, k_m]+1e-9),
 								obs=obs)
 
 				k_m_prev = k_m
@@ -1659,8 +1659,8 @@ class TensorRingAlt(PyroModule):
 				val_loss = self.nllh(data_val) / N_val
 				self.val_losses.append(val_loss)
 
-			if epoch % 1000 == 0 and verbose:
-				print('[epoch {}]  loss: {:.4f}, {:.4f}'.format(epoch, loss/N_train, self.nllh(data)/N_train))
+			if epoch % 10 == 0 and verbose:
+				print('[epoch {}]  loss: {:.4f}'.format(epoch, loss/N_train))
 
 			if early_stopping:
 				# Reset counter if val loss has improved by 0.1%
