@@ -10,10 +10,14 @@ from models import GaussianMixtureModel, CPModel, TensorTrain, GaussianMixtureMo
 from utils import plot_density, plot_density_alt, plot_train_loss
 pyro.enable_validation(True)
 
+import os
+#os.chdir('TFDE')
+
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-print(f'Using device: {device}')
+#print(f'Using device: {device}')
 
+device = 'cpu'
 
 #print(torch.cuda.device_count())
 #sys.exit(1)
@@ -35,11 +39,11 @@ data_train = torch.tensor(data.trn.x).to(device)
 data_val = torch.tensor(data.val.x).to(device)
 data_test = torch.tensor(data.tst.x).to(device)
 
-data_train = data_train[:1000,:]
+#data_train = data_train[:1000,:]
 #data = torch.column_stack((data, torch.zeros(5000))) # Test for 3D ---- add 0s as third element
 # Instantiate model
 model = eval(model_type)(K, device=device)
-model.init_from_data(data_train, k_means=True)
+#model.init_from_data(data_train, k_means=True)
 
 #%%
 
@@ -54,7 +58,10 @@ if model_type in ['TensorTrain', 'TensorRing'] :
     print("[Tensor train/ring initialised]")
 else:
     model.init_from_data(data_train, k_means=True)
-model.fit_model(data_train, mb_size=len(data_train), n_epochs=2000)
+model.fit_model(data_train, mb_size=len(data_train), lr=3e-4, n_epochs=2000)
+
+
+#sys.exit(1)
 
 #%%
 # Log likelihood of data
@@ -70,4 +77,5 @@ plot_density(model, data_train.detach().cpu().numpy(),
 			density_grid=[-3, 3, -3, 3],
 			axes=axes[1:])
 
+#plt.show()
 plt.savefig("tmp.png")

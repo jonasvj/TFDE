@@ -897,6 +897,9 @@ class GaussianMixtureModelFull(PyroModule):
 
 			return llh
 
+	def nllh(self, data):
+		return -self.log_likelihood(data)
+
 	def eval_density_grid(self, n_points=100, grid=[-5, 5, -5, 5]):
 		if self.M != 2:
 			raise ValueError('Can only evaluate density grid for 2-dimensional data.')
