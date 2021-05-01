@@ -148,8 +148,8 @@ class GaussianMixtureModel(PyroModule):
 			log_weights = torch.log(self.weights) # K
 			log_probs = dist.Normal(
 				loc=self.locs,
-				scale=self.scales).log_prob(data) # N x K x M
-			log_probs = log_probs.sum(dim=-1) # N x K
+				scale=self.scales).log_prob(data).sum(dim=-1) # N x K x M
+			#log_probs = log_probs.sum(dim=-1) # N x K
 
 			return torch.logsumexp(log_weights + log_probs, dim=-1) # N
 	
@@ -1659,7 +1659,8 @@ class TensorRingAlt(PyroModule):
 			
 			if data_val is not None:
 				self.eval()
-				val_loss = self.nllh(data_val) / N_val
+				val_loss = svi.evaluate_loss(data_val) / N_val
+				#val_loss = self.nllh(data_val) / N_val
 				self.val_losses.append(val_loss)
 
 			if epoch % 10 == 0 and verbose:
