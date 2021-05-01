@@ -68,7 +68,7 @@ class GaussianMixtureModel(PyroModule):
 								scale=self.scales[k, m]+1e-9),
 					obs=obs)
 
-			return x_sampleq
+			return x_sample
 	
 	def guide(self, data):
 		pass
